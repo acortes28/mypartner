@@ -79,25 +79,39 @@ def register_view(request):
 def password_recovery_view(request):
     if request.method == 'POST':
         email = request.POST.get('email', '').strip()
+
         try:
             user = User.objects.get(email=email)
-            raw_token = secrets.token_urlsafe(32)
-            token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
-            PasswordResetToken.objects.create(
-                user=user,
-                token_hash=token_hash,
-                expira_en=timezone.now() + timedelta(minutes=10),
-            )
-            recovery_url = f"{request.build_absolute_uri('/password-recovery/confirm/')}?token={raw_token}"
+        except User.DoesNotExist:
+            # Responder igual para no revelar si el correo existe
+            messages.success(request, 'Si el correo está registrado, recibirás un enlace de recuperación.')
+            return redirect('password-recovery')
+
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        PasswordResetToken.objects.create(
+            user=user,
+            token_hash=token_hash,
+            expira_en=timezone.now() + timedelta(minutes=10),
+        )
+
+        # Usar FRONTEND_URL para que el link funcione tanto en local como en Docker
+        recovery_url = f"{settings.FRONTEND_URL.rstrip('/')}/password-recovery/confirm/?token={raw_token}"
+
+        try:
             send_mail(
                 'Recupera tu contraseña — Finanzosos',
-                f'Haz clic aquí para cambiar tu contraseña:\n\n{recovery_url}\n\nExpira en 10 minutos.',
+                f'Haz clic aquí para cambiar tu contraseña:\n\n{recovery_url}\n\nEste enlace expira en 10 minutos.',
                 settings.DEFAULT_FROM_EMAIL,
                 [email],
-                fail_silently=True,
+                fail_silently=False,
             )
-        except User.DoesNotExist:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).exception('Error al enviar correo de recuperación a %s', email)
+            messages.error(request, f'Error al enviar el correo: {e}')
+            return redirect('password-recovery')
+
         messages.success(request, 'Si el correo está registrado, recibirás un enlace de recuperación.')
         return redirect('password-recovery')
     return render(request, 'users/password_recovery.html')

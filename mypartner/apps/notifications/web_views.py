@@ -1,9 +1,50 @@
+import json
+import logging
+import time
+
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
-from django.http import JsonResponse
+from django.db import connection
+from django.http import JsonResponse, StreamingHttpResponse
 from django.shortcuts import render, redirect
 
 from .models import Notificacion
+
+logger = logging.getLogger(__name__)
+
+_POLL_INTERVAL = 15  # segundos entre consultas
+
+
+@login_required
+def sse_notifications_view(request):
+    user_id = request.user.id
+
+    def event_stream():
+        last_count = None
+        tick = 0
+        try:
+            while True:
+                try:
+                    count = Notificacion.objects.filter(usuario_id=user_id, leida=False).count()
+                    if count != last_count:
+                        last_count = count
+                        yield f"data: {json.dumps({'unread_count': count})}\n\n"
+                    elif tick % 4 == 0:
+                        yield ": heartbeat\n\n"
+                except Exception:
+                    logger.exception("SSE error para usuario %s", user_id)
+                    return
+                finally:
+                    connection.close()
+                tick += 1
+                time.sleep(_POLL_INTERVAL)
+        except GeneratorExit:
+            pass
+
+    response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
+    response['Cache-Control'] = 'no-cache'
+    response['X-Accel-Buffering'] = 'no'
+    return response
 
 
 @login_required

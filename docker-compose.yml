@@ -36,8 +36,13 @@ services:
       DB_PASSWORD: finanzosos_pass
       DB_HOST: db
       DB_PORT: "5432"
-      # Correo (consola en desarrollo)
+      # ── Correo electrónico (Twilio SendGrid HTTP Web API) ───────────────
+      # Desarrollo — consola (no envía correos reales):
       EMAIL_BACKEND: django.core.mail.backends.console.EmailBackend
+      # Producción — descomentar y completar con tu API Key de SendGrid:
+      # EMAIL_BACKEND: apps.users.email_backends.SendGridEmailBackend
+      # SENDGRID_API_KEY: SG.xxxxxxxxxxxxxxxxxxxx
+      # DEFAULT_FROM_EMAIL: "Finanzosos <noreply@tudominio.com>"
       FRONTEND_URL: http://localhost:8000
     depends_on:
       db:

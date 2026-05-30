@@ -8,6 +8,8 @@ SECRET_KEY = config('SECRET_KEY', default='django-insecure-^==$)navj!c*mkf13y%b(
 
 DEBUG = config('DEBUG', default=True, cast=bool)
 
+print("DEBUG : ", DEBUG)
+
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='*').split(',')
 
 AUTH_USER_MODEL = 'users.User'
@@ -149,12 +151,21 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
 DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
 
-EMAIL_BACKEND = config('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
-EMAIL_HOST = config('EMAIL_HOST', default='smtp.gmail.com')
-EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
-EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
-EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
-EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='Finanzosos <noreply@finanzosos.cl>')
 FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:5173')
 LOGIN_URL = '/login/'
+
+# ── Correo electrónico (SMTP — Twilio SendGrid relay) ─────────────────────────
+# Desarrollo  → backend de consola (imprime en terminal, sin credenciales)
+# Producción  → smtp.EmailBackend apunta a smtp.sendgrid.net con API key
+EMAIL_BACKEND = config(
+    'EMAIL_BACKEND',
+    default='django.core.mail.backends.console.EmailBackend',
+)
+
+EMAIL_HOST = config('EMAIL_HOST', default='smtp.sendgrid.net')
+EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
+EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
+EMAIL_USE_SSL = config('EMAIL_USE_SSL', default=False, cast=bool)
+EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='apikey')
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')

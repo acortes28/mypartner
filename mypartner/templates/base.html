@@ -47,11 +47,11 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                     d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
             </svg>
-            {% if unread_notifications_count > 0 %}
-            <span class="absolute top-1 right-1 w-4 h-4 bg-red-500 rounded-full text-xs flex items-center justify-center font-bold">
-              {{ unread_notifications_count }}
+            <span id="notif-badge"
+                  class="absolute top-1 right-1 w-4 h-4 bg-red-500 rounded-full text-xs flex items-center justify-center font-bold"
+                  {% if not unread_notifications_count %}style="display:none"{% endif %}>
+              <span id="notif-count">{{ unread_notifications_count|default:0 }}</span>
             </span>
-            {% endif %}
           </button>
           <!-- Dropdown -->
           <div x-show="notifOpen" x-cloak x-transition
@@ -156,5 +156,32 @@
   </main>
 
   {% block extra_scripts %}{% endblock %}
+
+  {% if user.is_authenticated %}
+  <script>
+    (function () {
+      const badge = document.getElementById('notif-badge');
+      const countEl = document.getElementById('notif-count');
+      if (!badge || !countEl) return;
+
+      function connect() {
+        const es = new EventSource('{% url "notifications-stream" %}');
+
+        es.onmessage = function (e) {
+          const data = JSON.parse(e.data);
+          countEl.textContent = data.unread_count;
+          badge.style.display = data.unread_count > 0 ? 'flex' : 'none';
+        };
+
+        es.onerror = function () {
+          es.close();
+          setTimeout(connect, 30000);
+        };
+      }
+
+      connect();
+    })();
+  </script>
+  {% endif %}
 </body>
 </html>

@@ -93,14 +93,18 @@ class PasswordRecoveryRequestView(APIView):
             expira_en=expira_en,
         )
 
-        recovery_url = f"{settings.FRONTEND_URL}/reset-password?token={raw_token}"
-        send_mail(
-            subject='Recupera tu contraseña — Finanzosos',
-            message=f'Haz clic en el siguiente enlace para cambiar tu contraseña:\n\n{recovery_url}\n\nEste enlace expira en 10 minutos.',
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[email],
-            fail_silently=True,
-        )
+        recovery_url = f"{settings.FRONTEND_URL.rstrip('/')}/password-recovery/confirm/?token={raw_token}"
+        try:
+            send_mail(
+                subject='Recupera tu contraseña — MyPartner',
+                message=f'Haz clic en el siguiente enlace para cambiar tu contraseña:\n\n{recovery_url}\n\nEste enlace expira en 10 minutos.',
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[email],
+                fail_silently=False,
+            )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception('Error al enviar correo de recuperación (API) a %s', email)
 
         return Response({'detail': 'Te enviamos un correo con el link de recuperación.'})
 
