@@ -137,6 +137,13 @@ CORS_ALLOWED_ORIGINS = config(
     default='http://localhost:5173,http://localhost:3000'
 ).split(',')
 
+CSRF_TRUSTED_ORIGINS = config(
+    'CSRF_TRUSTED_ORIGINS',
+    default='http://localhost:8000'
+).split(',')
+
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
 LANGUAGE_CODE = 'es-cl'
 TIME_ZONE = 'America/Santiago'
 USE_I18N = True
@@ -155,9 +162,7 @@ DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='MyPartner <noreply@My
 FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:5173')
 LOGIN_URL = '/login/'
 
-# ── Correo electrónico (SMTP — Twilio SendGrid relay) ─────────────────────────
-# Desarrollo  → backend de consola (imprime en terminal, sin credenciales)
-# Producción  → smtp.EmailBackend apunta a smtp.sendgrid.net con API key
+
 EMAIL_BACKEND = config(
     'EMAIL_BACKEND',
     default='django.core.mail.backends.console.EmailBackend',
