@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% block title %}Documentos — Finanzosos{% endblock %}
+{% block title %}Documentos — MyPartner{% endblock %}
 
 {% block content %}
 <div class="px-4 py-6" x-data="{ showUpload: false }">
@@ -75,15 +75,11 @@
           Ver
         </a>
         {% if doc.usuario == user %}
-        <form method="post" class="inline" onsubmit="return confirm('¿Eliminar este documento?')">
-          {% csrf_token %}
-          <input type="hidden" name="action" value="delete">
-          <input type="hidden" name="doc_id" value="{{ doc.id }}">
-          <button type="submit"
-                  class="px-3 py-1.5 text-xs font-semibold text-red-600 border border-red-200 rounded-lg hover:bg-red-50">
-            Eliminar
-          </button>
-        </form>
+        <button type="button"
+                @click="confirmTitle = 'Eliminar documento'; confirmMessage = '¿Eliminar el documento {{ doc.nombre }}? Esta acción no se puede deshacer.'; confirmBtnText = 'Eliminar'; confirmFields = {action: 'delete', doc_id: '{{ doc.id }}'}; confirmModal = true"
+                class="px-3 py-1.5 text-xs font-semibold text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors">
+          Eliminar
+        </button>
         {% endif %}
       </div>
     </div>

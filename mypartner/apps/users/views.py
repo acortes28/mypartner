@@ -5,7 +5,8 @@ from datetime import timedelta
 from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.core.mail import send_mail
+from django.core.mail import EmailMultiAlternatives
+from django.template.loader import render_to_string
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import AllowAny
@@ -77,11 +78,13 @@ class PasswordRecoveryRequestView(APIView):
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data['email']
 
-        # Always return success to avoid email enumeration
         try:
             user = User.objects.get(email=email)
         except User.DoesNotExist:
-            return Response({'detail': 'Te enviamos un correo con el link de recuperación.'})
+            return Response(
+                {'detail': 'No existe una cuenta registrada con ese correo electrónico.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         raw_token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
@@ -95,13 +98,15 @@ class PasswordRecoveryRequestView(APIView):
 
         recovery_url = f"{settings.FRONTEND_URL.rstrip('/')}/password-recovery/confirm/?token={raw_token}"
         try:
-            send_mail(
-                subject='Recupera tu contraseña — MyPartner',
-                message=f'Haz clic en el siguiente enlace para cambiar tu contraseña:\n\n{recovery_url}\n\nEste enlace expira en 10 minutos.',
+            html_body = render_to_string('emails/password_recovery.html', {'recovery_url': recovery_url})
+            msg = EmailMultiAlternatives(
+                subject='Recupera tu contraseña — Finanzosos',
+                body=f'Haz clic en el siguiente enlace para cambiar tu contraseña:\n\n{recovery_url}\n\nEste enlace expira en 10 minutos.',
                 from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[email],
-                fail_silently=False,
+                to=[email],
             )
+            msg.attach_alternative(html_body, 'text/html')
+            msg.send(fail_silently=False)
         except Exception:
             import logging
             logging.getLogger(__name__).exception('Error al enviar correo de recuperación (API) a %s', email)

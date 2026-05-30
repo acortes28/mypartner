@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% block title %}Conceptos — Finanzosos{% endblock %}
+{% block title %}Conceptos — MyPartner{% endblock %}
 
 {% block content %}
 <div class="px-4 py-6" x-data="{ showAdd: false, editId: null, editNombre: '' }">
@@ -29,7 +29,7 @@
         <input type="hidden" name="concepto_id" value="{{ concepto_conflicto.id }}">
         <input type="hidden" name="opcion" value="mantener_movimientos">
         <button type="submit" class="w-full py-2.5 bg-yellow-600 text-white font-semibold rounded-xl text-xs">
-          Mantener movimientos
+          Conservar movimientos
         </button>
       </form>
       <form method="post" class="flex-1">
@@ -37,11 +37,10 @@
         <input type="hidden" name="action" value="delete">
         <input type="hidden" name="concepto_id" value="{{ concepto_conflicto.id }}">
         <input type="hidden" name="opcion" value="eliminar_movimientos">
-        <button type="submit" class="w-full py-2.5 bg-red-600 text-white font-semibold rounded-xl text-xs"
-                onclick="return confirm('¿Eliminar concepto y todos sus movimientos?')">
+        <button type="button" class="w-full py-2.5 bg-red-600 text-white font-semibold rounded-xl text-xs hover:bg-red-700 transition-colors"
+                @click="confirmTitle = 'Eliminar concepto'; confirmMessage = '¿Eliminar el concepto y todos sus movimientos asociados? Esta acción no se puede deshacer.'; confirmBtnText = 'Eliminar todo'; confirmFields = {action: 'delete', concepto_id: '{{ concepto_conflicto.id }}', opcion: 'eliminar_movimientos'}; confirmModal = true">
           Eliminar todo
         </button>
-      </form>
     </div>
   </div>
   {% endif %}

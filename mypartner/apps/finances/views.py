@@ -156,7 +156,7 @@ class MovimientoListCreateView(APIView):
             else f'Se registró un ingreso por ${movimiento.monto:,} de {request.user.username} por {concepto_nombre}'
         )
         tipo_notif = Notificacion.TIPO_GASTO if tipo_lower == 'gasto' else Notificacion.TIPO_INGRESO
-        crear_notificaciones_grupo(grupo, tipo_notif, titulo, referencia_id=movimiento.id)
+        crear_notificaciones_grupo(grupo, tipo_notif, titulo, referencia_id=movimiento.id, excluir_usuario=request.user)
 
         return Response(MovimientoSerializer(movimiento).data, status=status.HTTP_201_CREATED)
 
@@ -306,6 +306,7 @@ class PresupuestoListCreateView(APIView):
             Notificacion.TIPO_PRESUPUESTO,
             f'Se realizó un cambio en el presupuesto de {registro.concepto.nombre}',
             referencia_id=registro.id,
+            excluir_usuario=request.user,
         )
 
         return Response(RegistroPresupuestoSerializer(registro).data, status=status.HTTP_201_CREATED)
@@ -332,6 +333,7 @@ class PresupuestoDetailView(APIView):
             Notificacion.TIPO_PRESUPUESTO,
             f'Se realizó un cambio en el presupuesto de {registro.concepto.nombre}',
             referencia_id=registro.id,
+            excluir_usuario=request.user,
         )
 
         return Response(RegistroPresupuestoSerializer(registro).data)
@@ -352,6 +354,7 @@ class PresupuestoDetailView(APIView):
             grupo,
             Notificacion.TIPO_PRESUPUESTO,
             f'Se realizó un cambio en el presupuesto de {nombre_concepto}',
+            excluir_usuario=request.user,
         )
 
         return Response({'detail': 'Registro de presupuesto eliminado.'})

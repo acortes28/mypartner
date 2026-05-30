@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% block title %}{{ anuncio.nombre }} — Finanzosos{% endblock %}
+{% block title %}{{ anuncio.nombre }} — MyPartner{% endblock %}
 
 {% block content %}
 <div class="px-4 py-6">
@@ -11,15 +11,13 @@
     </a>
     <h1 class="text-xl font-bold text-gray-900 truncate flex-1">{{ anuncio.nombre }}</h1>
     {% if anuncio.usuario == user %}
-    <form method="post" class="flex-none" onsubmit="return confirm('¿Eliminar este anuncio?')">
-      {% csrf_token %}
-      <input type="hidden" name="action" value="delete">
-      <button type="submit" class="p-2 text-red-500 hover:text-red-700">
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-        </svg>
-      </button>
-    </form>
+    <button type="button"
+            @click="confirmTitle = 'Eliminar anuncio'; confirmMessage = '¿Eliminar este anuncio? Esta acción no se puede deshacer.'; confirmBtnText = 'Eliminar'; confirmAction = ''; confirmFields = {action: 'delete'}; confirmModal = true"
+            class="p-2 text-red-500 hover:text-red-700 transition-colors flex-none">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+      </svg>
+    </button>
     {% endif %}
   </div>
 

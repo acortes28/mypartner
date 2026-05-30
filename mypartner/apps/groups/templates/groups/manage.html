@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% block title %}Gestionar grupo — Finanzosos{% endblock %}
+{% block title %}Gestionar grupo — MyPartner{% endblock %}
 
 {% block content %}
 <div class="px-4 py-6">
@@ -96,16 +96,11 @@
             </button>
           </form>
           <!-- Remove -->
-          <form method="post" class="inline">
-            {% csrf_token %}
-            <input type="hidden" name="action" value="remove_member">
-            <input type="hidden" name="usuario_id" value="{{ m.usuario.id }}">
-            <button type="submit"
-                    onclick="return confirm('¿Expulsar a {{ m.usuario.username }} del grupo?')"
-                    class="px-2.5 py-1 rounded-lg text-xs font-semibold border border-red-200 text-red-600 hover:bg-red-50 transition-colors">
-              Quitar
-            </button>
-          </form>
+          <button type="button"
+                  @click="confirmTitle = 'Expulsar miembro'; confirmMessage = '¿Expulsar a {{ m.usuario.username }} del grupo?'; confirmBtnText = 'Expulsar'; confirmAction = ''; confirmFields = {action: 'remove_member', usuario_id: '{{ m.usuario.id }}'}; confirmModal = true"
+                  class="px-2.5 py-1 rounded-lg text-xs font-semibold border border-red-200 text-red-600 hover:bg-red-50 transition-colors">
+            Quitar
+          </button>
         </div>
         {% endif %}
       </div>
@@ -138,25 +133,19 @@
   </div>
 
   <!-- Delete group -->
-  <form method="post" onsubmit="return confirm('¿Eliminar el grupo? Esta acción no se puede deshacer.')">
-    {% csrf_token %}
-    <input type="hidden" name="action" value="delete_group">
-    <button type="submit"
-            class="w-full py-3 border-2 border-red-300 text-red-600 font-bold rounded-xl text-sm hover:bg-red-50 transition-colors">
-      🗑 Eliminar grupo
-    </button>
-  </form>
+  <button type="button"
+          @click="confirmTitle = 'Eliminar grupo'; confirmMessage = '¿Eliminar el grupo permanentemente? Esta acción no se puede deshacer y se perderán todos los datos.'; confirmBtnText = 'Eliminar grupo'; confirmAction = ''; confirmFields = {action: 'delete_group'}; confirmModal = true"
+          class="w-full py-3 border-2 border-red-300 text-red-600 font-bold rounded-xl text-sm hover:bg-red-50 transition-colors">
+    🗑 Eliminar grupo
+  </button>
 
   {% else %}
   <!-- Leave group -->
-  <form method="post" onsubmit="return confirm('¿Abandonar el grupo?')">
-    {% csrf_token %}
-    <input type="hidden" name="action" value="leave_group">
-    <button type="submit"
-            class="w-full py-3 border-2 border-orange-300 text-orange-600 font-bold rounded-xl text-sm hover:bg-orange-50 transition-colors">
-      Abandonar grupo
-    </button>
-  </form>
+  <button type="button"
+          @click="confirmTitle = 'Abandonar grupo'; confirmMessage = '¿Abandonar el grupo? Dejarás de tener acceso a sus finanzas y datos.'; confirmBtnText = 'Abandonar'; confirmAction = ''; confirmFields = {action: 'leave_group'}; confirmModal = true"
+          class="w-full py-3 border-2 border-orange-300 text-orange-600 font-bold rounded-xl text-sm hover:bg-orange-50 transition-colors">
+    Abandonar grupo
+  </button>
   {% endif %}
   {% endif %}
 </div>

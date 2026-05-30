@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% block title %}Anuncios — Finanzosos{% endblock %}
+{% block title %}Anuncios — MyPartner{% endblock %}
 
 {% block content %}
 <div class="px-4 py-6" x-data="{ showCreate: false }">
@@ -63,15 +63,11 @@
           Ver detalle
         </a>
         {% if a.usuario == user %}
-        <form method="post" action="{% url 'announcement-detail' a.id %}" class="flex-none"
-              onsubmit="return confirm('¿Eliminar este anuncio?')">
-          {% csrf_token %}
-          <input type="hidden" name="action" value="delete">
-          <button type="submit"
-                  class="px-4 py-2 text-sm font-semibold text-red-600 border border-red-200 rounded-xl hover:bg-red-50">
-            Eliminar
-          </button>
-        </form>
+        <button type="button"
+                @click="confirmTitle = 'Eliminar anuncio'; confirmMessage = '¿Eliminar el anuncio {{ a.nombre|escapejs }}?'; confirmBtnText = 'Eliminar'; confirmAction = '{% url 'announcement-detail' a.id %}'; confirmFields = {action: 'delete'}; confirmModal = true"
+                class="px-4 py-2 text-sm font-semibold text-red-600 border border-red-200 rounded-xl hover:bg-red-50 flex-none transition-colors">
+          Eliminar
+        </button>
         {% endif %}
       </div>
     </div>

@@ -1,0 +1,2 @@
+- Agregar validación de correo electrónico al registrarse
+- Agregar módulo de "Compartir gastos"

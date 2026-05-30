@@ -1,4 +1,4 @@
-# Requerimientos del Proyecto — Finanzosos
+# Requerimientos del Proyecto — MyPartner
 
 > Versión: 1.1 — MVP  
 > Fecha: 2026-05-29
@@ -525,7 +525,7 @@ Para el MVP se configura almacenamiento local mediante `MEDIA_ROOT` y `MEDIA_URL
 ### 5.2 Estructura del proyecto Django
 
 ```
-finanzosos/
+MyPartner/
 ├── config/
 │   ├── settings/
 │   │   ├── base.py          # Configuración compartida

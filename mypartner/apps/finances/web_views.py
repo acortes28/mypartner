@@ -124,6 +124,7 @@ def budget_view(request):
                     grupo, Notificacion.TIPO_PRESUPUESTO,
                     f'Se realizó un cambio en el presupuesto de {concepto.nombre}',
                     referencia_id=registro.id,
+                    excluir_usuario=request.user,
                 )
                 messages.success(request, 'Registro de presupuesto agregado.')
             except Exception as e:
@@ -140,6 +141,7 @@ def budget_view(request):
                     grupo, Notificacion.TIPO_PRESUPUESTO,
                     f'Se realizó un cambio en el presupuesto de {registro.concepto.nombre}',
                     referencia_id=registro.id,
+                    excluir_usuario=request.user,
                 )
                 messages.success(request, 'Monto actualizado.')
             except Exception:
@@ -154,6 +156,7 @@ def budget_view(request):
                 crear_notificaciones_grupo(
                     grupo, Notificacion.TIPO_PRESUPUESTO,
                     f'Se realizó un cambio en el presupuesto de {nombre}',
+                    excluir_usuario=request.user,
                 )
                 messages.success(request, 'Registro eliminado.')
             except Exception:
@@ -167,7 +170,10 @@ def budget_view(request):
         .select_related('concepto')
         .order_by('tipo', 'concepto__nombre')
     )
-    total = registros.aggregate(t=Sum('monto'))['t'] or 0
+    base = RegistroPresupuesto.objects.filter(grupo=grupo)
+    ingresos = base.filter(tipo='Ingreso').aggregate(t=Sum('monto'))['t'] or 0
+    gastos   = base.filter(tipo='Gasto').aggregate(t=Sum('monto'))['t'] or 0
+    total = ingresos - gastos
     conceptos_gasto = Concepto.objects.filter(grupo=grupo, tipo='Gasto', activo=True)
     conceptos_ingreso = Concepto.objects.filter(grupo=grupo, tipo='Ingreso', activo=True)
 
@@ -324,7 +330,7 @@ def add_movement_view(request):
             tipo_notif = Notificacion.TIPO_GASTO if tipo == 'Gasto' else Notificacion.TIPO_INGRESO
             accion = 'gasto' if tipo == 'Gasto' else 'ingreso'
             titulo = f'Se {"generó un gasto" if tipo == "Gasto" else "registró un ingreso"} por ${monto:,} de {request.user.username} por {concepto.nombre}'.replace(',', '.')
-            crear_notificaciones_grupo(grupo, tipo_notif, titulo, referencia_id=mov.id)
+            crear_notificaciones_grupo(grupo, tipo_notif, titulo, referencia_id=mov.id, excluir_usuario=request.user)
             messages.success(request, f'{tipo} registrado exitosamente.')
         except Exception:
             messages.error(request, 'Error al registrar. Verifica los datos.')
