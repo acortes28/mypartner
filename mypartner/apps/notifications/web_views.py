@@ -48,6 +48,27 @@ def sse_notifications_view(request):
 
 
 @login_required
+def notifications_unread_json_view(request):
+    notifs = (
+        Notificacion.objects
+        .filter(usuario=request.user, leida=False)
+        .order_by('-created_at')[:5]
+    )
+    return JsonResponse({
+        'notifications': [
+            {
+                'id': str(n.id),
+                'titulo': n.titulo,
+                'tipo': n.tipo,
+                'referencia_id': str(n.referencia_id) if n.referencia_id else None,
+                'created_at': n.created_at.strftime('%d/%m/%Y %H:%M'),
+            }
+            for n in notifs
+        ]
+    })
+
+
+@login_required
 def notifications_view(request):
     qs = Notificacion.objects.filter(usuario=request.user).order_by('-created_at')
     paginator = Paginator(qs, 10)
