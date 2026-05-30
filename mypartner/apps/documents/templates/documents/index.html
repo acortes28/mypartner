@@ -1,0 +1,99 @@
+{% extends 'base.html' %}
+{% block title %}Documentos — Finanzosos{% endblock %}
+
+{% block content %}
+<div class="px-4 py-6" x-data="{ showUpload: false }">
+  <div class="flex items-center justify-between mb-6">
+    <div class="flex items-center gap-3">
+      <a href="{% url 'main-menu' %}" class="p-2 text-gray-500 hover:text-gray-700">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+      </a>
+      <div>
+        <h1 class="text-xl font-bold text-gray-900">Documentos</h1>
+        <p class="text-xs text-gray-400">{{ grupo.nombre }}</p>
+      </div>
+    </div>
+    <button @click="showUpload = !showUpload"
+            class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold">
+      + Subir
+    </button>
+  </div>
+
+  <!-- Upload form -->
+  <div x-show="showUpload" x-transition class="bg-white rounded-2xl shadow-sm p-5 mb-4">
+    <h3 class="font-bold text-gray-900 mb-4">Subir documento</h3>
+    <form method="post" enctype="multipart/form-data" class="space-y-3">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="upload">
+      <div>
+        <label class="block text-xs font-semibold text-gray-600 mb-1">Nombre *</label>
+        <input type="text" name="nombre" required
+               class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-gray-600 mb-1">Archivo * <span class="text-gray-400 font-normal">(pdf, csv, xlsx, png · máx 10MB)</span></label>
+        <input type="file" name="archivo" required accept=".pdf,.csv,.xlsx,.png"
+               class="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm text-gray-600 file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-gray-600 mb-1">Descripción</label>
+        <textarea name="descripcion" rows="2"
+                  class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"></textarea>
+      </div>
+      <div class="flex gap-2">
+        <button type="submit" class="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-sm">
+          Subir
+        </button>
+        <button type="button" @click="showUpload = false"
+                class="px-4 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-600">Cancelar</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Documents list -->
+  <div class="space-y-3">
+    {% if documentos %}
+    {% for doc in documentos %}
+    <div class="bg-white rounded-2xl shadow-sm p-4 flex items-start gap-4">
+      <div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0
+        {% if doc.tipo_archivo == 'pdf' %}bg-red-100 text-red-600
+        {% elif doc.tipo_archivo == 'png' %}bg-purple-100 text-purple-600
+        {% elif doc.tipo_archivo == 'xlsx' %}bg-green-100 text-green-600
+        {% else %}bg-blue-100 text-blue-600{% endif %}">
+        <span class="text-xs font-extrabold uppercase">{{ doc.tipo_archivo }}</span>
+      </div>
+      <div class="flex-1 min-w-0">
+        <p class="font-semibold text-gray-900 text-sm truncate">{{ doc.nombre }}</p>
+        {% if doc.descripcion %}<p class="text-xs text-gray-500 mt-0.5 truncate">{{ doc.descripcion }}</p>{% endif %}
+        <p class="text-xs text-gray-400 mt-1">@{{ doc.usuario.username }} · {{ doc.created_at|date:"d/m/Y" }}</p>
+      </div>
+      <div class="flex items-center gap-2 flex-shrink-0">
+        <a href="{{ doc.archivo.url }}" target="_blank"
+           class="px-3 py-1.5 text-xs font-semibold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50">
+          Ver
+        </a>
+        {% if doc.usuario == user %}
+        <form method="post" class="inline" onsubmit="return confirm('¿Eliminar este documento?')">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="delete">
+          <input type="hidden" name="doc_id" value="{{ doc.id }}">
+          <button type="submit"
+                  class="px-3 py-1.5 text-xs font-semibold text-red-600 border border-red-200 rounded-lg hover:bg-red-50">
+            Eliminar
+          </button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="bg-white rounded-2xl shadow-sm p-12 text-center">
+      <div class="text-4xl mb-3">📁</div>
+      <p class="text-gray-400 text-sm">Sin documentos subidos</p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,48 @@
+services:
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: finanzosos
+      POSTGRES_USER: finanzosos
+      POSTGRES_PASSWORD: finanzosos_pass
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U finanzosos -d finanzosos"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  web:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - ./mypartner:/app          # hot-reload: cambios locales se reflejan al instante
+      - media_vol:/app/media      # archivos subidos persisten entre reinicios
+    ports:
+      - "8000:8000"
+    environment:
+      SECRET_KEY: django-insecure-docker-cambia-esto-en-produccion
+      DEBUG: "True"
+      ALLOWED_HOSTS: "*"
+      CORS_ALLOWED_ORIGINS: "http://localhost:8000,http://localhost:5173,http://localhost:3000"
+      # Base de datos
+      DB_ENGINE: django.db.backends.postgresql
+      DB_NAME: finanzosos
+      DB_USER: finanzosos
+      DB_PASSWORD: finanzosos_pass
+      DB_HOST: db
+      DB_PORT: "5432"
+      # Correo (consola en desarrollo)
+      EMAIL_BACKEND: django.core.mail.backends.console.EmailBackend
+      FRONTEND_URL: http://localhost:8000
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  media_vol:

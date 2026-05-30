@@ -1,0 +1,143 @@
+{% extends 'base.html' %}
+{% load finance_filters %}
+{% block title %}Presupuesto — Finanzosos{% endblock %}
+
+{% block content %}
+<div class="px-4 py-6" x-data="{ showAdd: false, editId: null, editMonto: '' }">
+  <div class="flex items-center justify-between mb-6">
+    <div class="flex items-center gap-3">
+      <a href="{% url 'finances-dashboard' %}" class="p-2 text-gray-500 hover:text-gray-700">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+      </a>
+      <h1 class="text-xl font-bold text-gray-900">Presupuesto</h1>
+    </div>
+    <button @click="showAdd = !showAdd"
+            class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold transition-colors">
+      + Agregar
+    </button>
+  </div>
+
+  <!-- Add form -->
+  <div x-show="showAdd" x-transition class="bg-white rounded-2xl shadow-sm p-5 mb-4">
+    <h3 class="font-bold text-gray-900 mb-4">Nuevo registro</h3>
+    <form method="post" class="space-y-3">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="add">
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">Tipo *</label>
+          <select name="tipo" id="tipo-select" required onchange="updateConceptos(this.value)"
+                  class="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-white">
+            <option value="">Tipo</option>
+            <option value="Gasto">Gasto</option>
+            <option value="Ingreso">Ingreso</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">Concepto *</label>
+          <select name="concepto" id="concepto-select" required
+                  class="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-white">
+            <option value="">Selecciona tipo primero</option>
+          </select>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">Nombre *</label>
+          <input type="text" name="nombre" required
+                 class="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">Fecha *</label>
+          <input type="date" name="fecha" required
+                 class="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-gray-600 mb-1">Monto (CLP) *</label>
+        <input type="number" name="monto" min="1" required
+               class="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+      </div>
+      <div class="flex gap-2">
+        <button type="submit"
+                class="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-sm">
+          Guardar
+        </button>
+        <button type="button" @click="showAdd = false"
+                class="px-4 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-600 hover:bg-gray-50">
+          Cancelar
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Table -->
+  <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+    {% if registros %}
+    {% for r in registros %}
+    <div class="border-b border-gray-50 last:border-0">
+      <div class="flex items-center justify-between px-5 py-3.5">
+        <div>
+          <p class="text-sm font-semibold text-gray-900">{{ r.concepto.nombre }}</p>
+          <p class="text-xs text-gray-400">{{ r.nombre }} · {{ r.fecha|date:"d/m/Y" }}</p>
+          <span class="text-xs font-semibold {% if r.tipo == 'Gasto' %}text-red-600{% else %}text-green-600{% endif %}">{{ r.tipo }}</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <p class="font-bold text-gray-900">{{ r.monto|clp }}</p>
+          <div class="flex gap-1">
+            <button @click="editId = '{{ r.id }}'; editMonto = {{ r.monto }}"
+                    class="px-2.5 py-1 text-xs font-semibold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50">
+              Modificar
+            </button>
+            <form method="post" class="inline" onsubmit="return confirm('¿Eliminar este registro?')">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="delete">
+              <input type="hidden" name="registro_id" value="{{ r.id }}">
+              <button type="submit"
+                      class="px-2.5 py-1 text-xs font-semibold text-red-600 border border-red-200 rounded-lg hover:bg-red-50">
+                Eliminar
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+      <!-- Edit inline -->
+      <div x-show="editId === '{{ r.id }}'" x-transition class="px-5 pb-4">
+        <form method="post" class="flex gap-2">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="modify">
+          <input type="hidden" name="registro_id" value="{{ r.id }}">
+          <input type="number" name="monto" x-model="editMonto" min="1" required
+                 class="flex-1 px-3 py-2 rounded-xl border border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+          <button type="submit" class="px-4 py-2 bg-blue-600 text-white font-semibold rounded-xl text-sm">OK</button>
+          <button type="button" @click="editId = null" class="px-3 py-2 border border-gray-200 rounded-xl text-sm">✕</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+    <!-- Total -->
+    <div class="flex justify-between items-center px-5 py-4 bg-green-50 border-t border-green-100">
+      <p class="font-bold text-green-900">Total presupuesto</p>
+      <p class="font-extrabold text-green-800 text-lg">{{ total|clp }}</p>
+    </div>
+    {% else %}
+    <p class="text-center py-12 text-gray-400 text-sm">Sin registros de presupuesto</p>
+    {% endif %}
+  </div>
+</div>
+
+{% block extra_scripts %}
+<script>
+  const gastos = [{% for c in conceptos_gasto %}{ id: '{{ c.id }}', nombre: '{{ c.nombre }}' },{% endfor %}];
+  const ingresos = [{% for c in conceptos_ingreso %}{ id: '{{ c.id }}', nombre: '{{ c.nombre }}' },{% endfor %}];
+  function updateConceptos(tipo) {
+    const sel = document.getElementById('concepto-select');
+    sel.innerHTML = '<option value="">Selecciona concepto</option>';
+    const list = tipo === 'Gasto' ? gastos : tipo === 'Ingreso' ? ingresos : [];
+    list.forEach(c => { sel.innerHTML += `<option value="${c.id}">${c.nombre}</option>`; });
+  }
+</script>
+{% endblock %}
+{% endblock %}

@@ -1,0 +1,51 @@
+{% extends 'base.html' %}
+{% load finance_filters %}
+{% block title %}Detalle movimiento — Finanzosos{% endblock %}
+
+{% block content %}
+<div class="px-4 py-6">
+  <div class="flex items-center gap-3 mb-6">
+    <a href="{% url 'finances-movements' %}" class="p-2 text-gray-500 hover:text-gray-700">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+      </svg>
+    </a>
+    <h1 class="text-xl font-bold text-gray-900">Detalle</h1>
+  </div>
+
+  <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+    <!-- Amount header -->
+    <div class="{% if movimiento.tipo == 'Gasto' %}bg-red-600{% else %}bg-green-600{% endif %} px-6 py-8 text-white text-center">
+      <p class="text-sm font-semibold opacity-80 mb-1">{{ movimiento.tipo }}</p>
+      <p class="text-4xl font-extrabold">
+        {% if movimiento.tipo == 'Gasto' %}-{% else %}+{% endif %}{{ movimiento.monto|clp }}
+      </p>
+    </div>
+
+    <div class="divide-y divide-gray-100">
+      <div class="flex justify-between px-5 py-4">
+        <span class="text-sm text-gray-500">Nombre</span>
+        <span class="text-sm font-semibold text-gray-900">{{ movimiento.nombre }}</span>
+      </div>
+      <div class="flex justify-between px-5 py-4">
+        <span class="text-sm text-gray-500">Concepto</span>
+        <span class="text-sm font-semibold text-gray-900">{{ movimiento.concepto.nombre|default:"Desconocido" }}</span>
+      </div>
+      {% if movimiento.detalle %}
+      <div class="px-5 py-4">
+        <p class="text-sm text-gray-500 mb-1">Detalle</p>
+        <p class="text-sm text-gray-900">{{ movimiento.detalle }}</p>
+      </div>
+      {% endif %}
+      <div class="flex justify-between px-5 py-4">
+        <span class="text-sm text-gray-500">Usuario</span>
+        <span class="text-sm font-semibold text-gray-900">@{{ movimiento.usuario.username }}</span>
+      </div>
+      <div class="flex justify-between px-5 py-4">
+        <span class="text-sm text-gray-500">Fecha y hora</span>
+        <span class="text-sm font-semibold text-gray-900">{{ movimiento.fecha_hora|date:"d/m/Y H:i" }}</span>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
