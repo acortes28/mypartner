@@ -4,5 +4,8 @@ set -e
 echo "⏳ Aplicando migraciones..."
 python manage.py migrate --noinput
 
-echo "✅ Migraciones listas. Iniciando servidor..."
+echo "📦 Recopilando archivos estáticos..."
+python manage.py collectstatic --noinput
+
+echo "✅ Listo. Iniciando servidor..."
 exec "$@"
