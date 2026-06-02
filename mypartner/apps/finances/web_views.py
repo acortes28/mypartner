@@ -144,7 +144,7 @@ def budget_view(request):
             fecha_fin = None
             if fecha_fin_str and periodicidad in ('Mensual', 'Anual'):
                 try:
-                    fecha_fin = date.fromisoformat(fecha_fin_str + '-01')
+                    fecha_fin = date.fromisoformat(fecha_fin_str)
                 except ValueError:
                     pass
             try:
