@@ -1,0 +1,73 @@
+{% extends 'base.html' %}
+{% block title %}{% if success %}Cuenta verificada{% else %}Enlace inválido{% endif %} — Finanzosos{% endblock %}
+{% block main_class %}{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4 py-12">
+
+  <div class="w-full max-w-sm bg-white rounded-2xl shadow-sm overflow-hidden">
+
+    <!-- Header -->
+    <div class="bg-green-800 px-6 py-8 text-center">
+      <p class="text-4xl mb-2">💚</p>
+      <h1 class="text-2xl font-extrabold text-white tracking-tight">Finanzosos</h1>
+      <p class="text-green-300 text-xs font-medium mt-1">Gestión colaborativa de presupuestos</p>
+    </div>
+
+    <div class="px-6 py-8 text-center">
+
+      {% if success %}
+      <!-- Éxito -->
+      <div class="w-16 h-16 bg-green-100 rounded-2xl flex items-center justify-center mx-auto mb-5">
+        <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
+        </svg>
+      </div>
+      <h2 class="text-xl font-extrabold text-gray-900 mb-2">¡Cuenta verificada!</h2>
+      <p class="text-sm text-gray-500 leading-relaxed mb-6">
+        Tu correo ha sido confirmado correctamente.<br>
+        Ya puedes iniciar sesión y usar Finanzosos.
+      </p>
+      <a href="{% url 'login' %}"
+         class="block w-full py-3.5 text-center text-sm font-bold text-white bg-green-700 hover:bg-green-800 rounded-xl transition-colors">
+        Iniciar sesión
+      </a>
+
+      {% elif error == 'expired' %}
+      <!-- Expirado -->
+      <div class="w-16 h-16 bg-yellow-100 rounded-2xl flex items-center justify-center mx-auto mb-5">
+        <svg class="w-8 h-8 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+      </div>
+      <h2 class="text-xl font-extrabold text-gray-900 mb-2">Enlace expirado</h2>
+      <p class="text-sm text-gray-500 leading-relaxed mb-6">
+        El enlace de verificación ya expiró.<br>
+        Regístrate nuevamente para recibir un enlace nuevo.
+      </p>
+      <a href="{% url 'register' %}"
+         class="block w-full py-3.5 text-center text-sm font-bold text-white bg-green-700 hover:bg-green-800 rounded-xl transition-colors">
+        Volver al registro
+      </a>
+
+      {% else %}
+      <!-- Inválido -->
+      <div class="w-16 h-16 bg-red-100 rounded-2xl flex items-center justify-center mx-auto mb-5">
+        <svg class="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </div>
+      <h2 class="text-xl font-extrabold text-gray-900 mb-2">Enlace inválido</h2>
+      <p class="text-sm text-gray-500 leading-relaxed mb-6">
+        Este enlace de verificación no es válido<br>o ya fue utilizado anteriormente.
+      </p>
+      <a href="{% url 'login' %}"
+         class="block w-full py-3.5 text-center text-sm font-bold text-white bg-green-700 hover:bg-green-800 rounded-xl transition-colors">
+        Ir al inicio de sesión
+      </a>
+      {% endif %}
+
+    </div>
+  </div>
+</div>
+{% endblock %}

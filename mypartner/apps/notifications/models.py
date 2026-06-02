@@ -9,12 +9,14 @@ class Notificacion(models.Model):
     TIPO_PRESUPUESTO = 'presupuesto'
     TIPO_ANUNCIO = 'anuncio'
     TIPO_INVITACION = 'invitacion'
+    TIPO_GASTO_COMPARTIDO = 'gasto_compartido'
     TIPO_CHOICES = [
         (TIPO_GASTO, 'Gasto'),
         (TIPO_INGRESO, 'Ingreso'),
         (TIPO_PRESUPUESTO, 'Presupuesto'),
         (TIPO_ANUNCIO, 'Anuncio'),
         (TIPO_INVITACION, 'Invitación'),
+        (TIPO_GASTO_COMPARTIDO, 'Gasto compartido'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

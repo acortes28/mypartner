@@ -19,6 +19,13 @@ class Concepto(models.Model):
 
     class Meta:
         db_table = 'conceptos'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['nombre', 'grupo'],
+                condition=models.Q(activo=True),
+                name='conceptos_nombre_grupo_activo_unique',
+            )
+        ]
 
     def __str__(self):
         return f"{self.nombre} ({self.tipo})"
@@ -68,8 +75,21 @@ class RegistroPresupuesto(models.Model):
     TIPO_INGRESO = 'Ingreso'
     TIPO_CHOICES = [(TIPO_GASTO, 'Gasto'), (TIPO_INGRESO, 'Ingreso')]
 
+    PERIODICIDAD_PUNTUAL = 'Puntual'
+    PERIODICIDAD_MENSUAL = 'Mensual'
+    PERIODICIDAD_ANUAL = 'Anual'
+    PERIODICIDAD_CHOICES = [
+        (PERIODICIDAD_PUNTUAL, 'Puntual'),
+        (PERIODICIDAD_MENSUAL, 'Mensual'),
+        (PERIODICIDAD_ANUAL, 'Anual'),
+    ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tipo = models.CharField(max_length=10, choices=TIPO_CHOICES)
+    periodicidad = models.CharField(
+        max_length=10, choices=PERIODICIDAD_CHOICES, default=PERIODICIDAD_PUNTUAL
+    )
+    fecha_fin = models.DateField(null=True, blank=True)
     concepto = models.ForeignKey(
         Concepto, on_delete=models.PROTECT, related_name='presupuestos'
     )
@@ -88,3 +108,28 @@ class RegistroPresupuesto(models.Model):
 
     def __str__(self):
         return f"Presupuesto {self.nombre} - ${self.monto:,}"
+
+
+class GastoCompartido(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    movimiento = models.ForeignKey(
+        Movimiento, on_delete=models.CASCADE, related_name='compartidos'
+    )
+    usuario_acreedor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='gastos_acreedor'
+    )
+    usuario_deudor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='gastos_deudor'
+    )
+    monto_pendiente = models.PositiveIntegerField()
+    pagado = models.BooleanField(default=False)
+    grupo = models.ForeignKey(
+        'groups.Grupo', on_delete=models.CASCADE, related_name='gastos_compartidos'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'gastos_compartidos'
+
+    def __str__(self):
+        return f"{self.usuario_acreedor} → {self.usuario_deudor}: ${self.monto_pendiente:,}"

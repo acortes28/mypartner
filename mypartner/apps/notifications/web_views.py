@@ -90,6 +90,8 @@ def mark_read_view(request, notification_id):
 
     if notif.tipo == Notificacion.TIPO_INVITACION and notif.referencia_id:
         return redirect('invitation-detail', invitation_id=notif.referencia_id)
+    if notif.tipo == Notificacion.TIPO_GASTO_COMPARTIDO:
+        return redirect('finances-shared')
     if notif.tipo in (Notificacion.TIPO_GASTO, Notificacion.TIPO_INGRESO) and notif.referencia_id:
         return redirect('finances-movement-detail', movement_id=notif.referencia_id)
     if notif.tipo == Notificacion.TIPO_PRESUPUESTO:

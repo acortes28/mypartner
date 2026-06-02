@@ -9,11 +9,29 @@
 
 {% block content %}
 <!-- Un único x-data que abarca el contenido, la barra inferior y los paneles -->
-<div x-data="{ panel: null }" class="pb-28">
+<div x-data="{
+  panel: null,
+  esCompartido: false,
+  nombreGasto: '',
+  conceptoGasto: '',
+  montoGasto: '',
+  detalleGasto: '',
+  compartirMitad: false,
+  montoCompartido: '',
+  abrirPaso2() {
+    if (this.esCompartido) { this.panel = 'gasto_paso2'; }
+    else { this.$refs.formGasto.submit(); }
+  },
+  onMitadChange() {
+    if (this.compartirMitad && this.montoGasto) {
+      this.montoCompartido = Math.floor(parseInt(this.montoGasto) / 2);
+    } else if (!this.compartirMitad) { this.montoCompartido = ''; }
+  }
+}" class="pb-28">
 
   <!-- Header -->
   <div class="bg-green-800 text-white px-4 pt-2 pb-6">
-    <div class="flex items-center justify-between mb-4">
+    <div class="flex items-center justify-between mb-3">
       <div>
         <p class="text-green-300 text-xs font-semibold uppercase tracking-wide">{{ grupo.nombre }}</p>
         <h1 class="text-xl font-extrabold">Finanzas</h1>
@@ -34,11 +52,38 @@
       </div>
     </div>
 
+    <!-- Switch Histórico / Mensual + Mis pendientes -->
+    <div class="flex items-center justify-between mb-4">
+      <div class="flex bg-green-900/50 rounded-xl p-1">
+        <a href="?vista=historico"
+           class="px-4 py-1.5 rounded-lg text-xs font-bold transition-colors
+                  {% if vista == 'historico' %}bg-white text-green-800{% else %}text-green-300 hover:text-white{% endif %}">
+          Histórico
+        </a>
+        <a href="?vista=mensual"
+           class="px-4 py-1.5 rounded-lg text-xs font-bold transition-colors
+                  {% if vista == 'mensual' %}bg-white text-green-800{% else %}text-green-300 hover:text-white{% endif %}">
+          Mensual
+        </a>
+      </div>
+      <a href="{% url 'finances-shared' %}"
+         class="relative px-3 py-1.5 bg-green-700 hover:bg-green-600 rounded-lg text-xs font-semibold transition-colors">
+        Mis pendientes
+        {% if pendientes_count %}
+        <span class="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+          {{ pendientes_count }}
+        </span>
+        {% endif %}
+      </a>
+    </div>
+
     <!-- KPI Cards -->
     <div class="space-y-3">
       <div class="bg-green-700/50 rounded-2xl p-4 backdrop-blur-sm">
-        <p class="text-green-300 text-xs font-semibold mb-1">Gasto acumulado mensual</p>
-        <p class="text-2xl font-extrabold">{{ gasto_mensual|clp }}</p>
+        <p class="text-green-300 text-xs font-semibold mb-1">
+          Gasto acumulado {% if vista == 'mensual' %}mensual{% else %}histórico{% endif %}
+        </p>
+        <p class="text-2xl font-extrabold">{{ gasto_total|clp }}</p>
       </div>
       <div class="grid grid-cols-2 gap-3">
         <div class="bg-green-700/50 rounded-2xl p-4 backdrop-blur-sm">
@@ -61,7 +106,9 @@
   <div class="px-4 pt-4 space-y-4">
     {% if chart_data %}
     <div class="bg-white rounded-2xl shadow-sm p-5">
-      <h2 class="font-bold text-gray-900 text-sm mb-4">Gastos por concepto — mes actual</h2>
+      <h2 class="font-bold text-gray-900 text-sm mb-4">
+        Gastos por concepto — {% if vista == 'mensual' %}mes actual{% else %}histórico{% endif %}
+      </h2>
       <div class="flex flex-col items-center">
         <canvas id="pieChart" width="200" height="200" style="max-width:220px;max-height:220px"></canvas>
         <div class="mt-4 w-full space-y-1.5" id="chart-legend"></div>
@@ -119,7 +166,7 @@
     </div>
   </div>
 
-  <!-- ─── Panel Añadir Gasto ─── DENTRO del x-data -->
+  <!-- ─── Panel Añadir Gasto (Paso 1) ─── DENTRO del x-data -->
   <div x-show="panel === 'gasto'" x-cloak
        class="fixed inset-0 bg-black/50 z-40 flex items-end justify-center"
        @click.self="panel = null">
@@ -128,17 +175,17 @@
         <h3 class="font-bold text-gray-900 text-lg">Añadir Gasto</h3>
         <button @click="panel = null" class="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
       </div>
-      <form method="post" action="{% url 'finances-add-movement' %}" class="space-y-4">
+      <form x-ref="formGasto" method="post" action="{% url 'finances-add-movement' %}" class="space-y-4">
         {% csrf_token %}
         <input type="hidden" name="tipo" value="Gasto">
         <div>
           <label class="block text-sm font-semibold text-gray-700 mb-1.5">Nombre *</label>
-          <input type="text" name="nombre" required
+          <input type="text" name="nombre" x-model="nombreGasto" required
                  class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-red-400 text-sm">
         </div>
         <div>
           <label class="block text-sm font-semibold text-gray-700 mb-1.5">Concepto *</label>
-          <select name="concepto" required
+          <select name="concepto" required @change="conceptoGasto = $event.target.value"
                   class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-600 text-sm bg-white">
             <option value="">Selecciona concepto</option>
             {% for c in conceptos_gasto %}
@@ -152,17 +199,76 @@
         </div>
         <div>
           <label class="block text-sm font-semibold text-gray-700 mb-1.5">Monto (CLP) *</label>
-          <input type="number" name="monto" min="1" required
+          <input type="number" name="monto" x-model="montoGasto" min="1" required
                  class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-red-400 text-sm">
         </div>
         <div>
           <label class="block text-sm font-semibold text-gray-700 mb-1.5">Detalle</label>
-          <input type="text" name="detalle"
+          <input type="text" name="detalle" x-model="detalleGasto"
+                 class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-red-400 text-sm">
+        </div>
+        <label class="flex items-center gap-2.5 cursor-pointer select-none">
+          <input type="checkbox" x-model="esCompartido" class="w-4 h-4 accent-red-600 rounded">
+          <span class="text-sm text-gray-700 font-medium">Es compartido</span>
+        </label>
+        <button type="button" @click="abrirPaso2()"
+                class="w-full py-3.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-sm">
+          Registrar gasto
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ─── Panel Gasto Compartido (Paso 2) ─── DENTRO del x-data -->
+  <div x-show="panel === 'gasto_paso2'" x-cloak
+       class="fixed inset-0 bg-black/50 z-40 flex items-end justify-center"
+       @click.self="panel = null">
+    <div class="bg-white rounded-t-2xl w-full max-w-md p-6 slide-up">
+      <div class="flex justify-between items-center mb-5">
+        <div>
+          <p class="text-xs text-gray-400 font-medium mb-0.5">Paso 2 de 2</p>
+          <h3 class="font-bold text-gray-900 text-lg">Detalle compartido</h3>
+        </div>
+        <button @click="panel = 'gasto'" class="text-gray-400 hover:text-gray-600 text-sm font-semibold">← Volver</button>
+      </div>
+      <form method="post" action="{% url 'finances-add-movement' %}" class="space-y-4">
+        {% csrf_token %}
+        <input type="hidden" name="tipo" value="Gasto">
+        <input type="hidden" name="nombre" :value="nombreGasto">
+        <input type="hidden" name="concepto" :value="conceptoGasto">
+        <input type="hidden" name="monto" :value="montoGasto">
+        <input type="hidden" name="detalle" :value="detalleGasto">
+        <input type="hidden" name="es_compartido" value="1">
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Usuario compartido *</label>
+          <select name="usuario_deudor" required
+                  class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-red-400 text-sm bg-white">
+            <option value="">Selecciona usuario</option>
+            {% for m in otros_miembros %}
+            <option value="{{ m.usuario.id }}">{{ m.usuario.username }}</option>
+            {% endfor %}
+          </select>
+          {% if not otros_miembros %}
+          <p class="text-xs text-yellow-600 mt-1">⚠ No hay otros miembros en el grupo.</p>
+          {% endif %}
+        </div>
+        <label class="flex items-center gap-2.5 cursor-pointer select-none">
+          <input type="checkbox" x-model="compartirMitad" @change="onMitadChange()" class="w-4 h-4 accent-red-600 rounded">
+          <span class="text-sm text-gray-700 font-medium">
+            Compartir la mitad
+            <span class="text-gray-400 font-normal"
+                  x-text="montoGasto ? '(' + new Intl.NumberFormat(\'es-CL\', {style:\'currency\', currency:\'CLP\', maximumFractionDigits:0}).format(Math.floor(parseInt(montoGasto)/2)) + ')' : ''">
+            </span>
+          </span>
+        </label>
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Monto a compartir (CLP) *</label>
+          <input type="number" name="monto_compartido" x-model="montoCompartido" min="1" required
                  class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-red-400 text-sm">
         </div>
         <button type="submit"
                 class="w-full py-3.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-sm">
-          Registrar gasto
+          Finalizar
         </button>
       </form>
     </div>

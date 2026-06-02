@@ -13,7 +13,7 @@ from django.template.loader import render_to_string
 from django.shortcuts import render, redirect
 from django.utils import timezone
 
-from .models import User, PasswordResetToken
+from .models import User, EmailVerificationToken, PasswordResetToken
 
 
 def login_view(request):
@@ -26,7 +26,15 @@ def login_view(request):
         if user:
             login(request, user)
             return redirect(request.GET.get('next', 'main-menu'))
-        messages.error(request, 'Usuario o contraseña inválidos.')
+        # Detectar si el usuario existe pero no ha verificado su correo
+        try:
+            u = User.objects.get(username=username)
+            if not u.is_active:
+                messages.error(request, 'Debes confirmar tu correo electrónico antes de iniciar sesión.')
+            else:
+                messages.error(request, 'Usuario o contraseña inválidos.')
+        except User.DoesNotExist:
+            messages.error(request, 'Usuario o contraseña inválidos.')
     return render(request, 'users/login.html')
 
 
@@ -70,9 +78,36 @@ def register_view(request):
             first_name=data['first_name'],
             last_name=data['last_name'],
             password=data['password'],
+            is_active=False,
         )
-        messages.success(request, 'Registro exitoso. Ya puedes iniciar sesión.')
-        return redirect('login')
+
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        EmailVerificationToken.objects.create(
+            user=user,
+            token_hash=token_hash,
+            expira_en=timezone.now() + timedelta(hours=24),
+        )
+        verify_url = f"{settings.FRONTEND_URL.rstrip('/')}/verify-email/?token={raw_token}"
+
+        try:
+            html_body = render_to_string('emails/email_verification.html', {
+                'verify_url': verify_url,
+                'first_name': user.first_name,
+            })
+            msg = EmailMultiAlternatives(
+                subject='Confirma tu correo — Finanzosos',
+                body=f'Hola {user.first_name}, haz clic aquí para confirmar tu cuenta:\n\n{verify_url}\n\nEste enlace expira en 24 horas.',
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                to=[user.email],
+            )
+            msg.attach_alternative(html_body, 'text/html')
+            msg.send(fail_silently=False)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception('Error al enviar correo de verificación a %s', user.email)
+
+        return render(request, 'users/verify_email_pending.html', {'email': user.email})
 
     return render(request, 'users/register.html')
 
@@ -155,6 +190,26 @@ def password_recovery_confirm_view(request):
         return redirect('login')
 
     return render(request, 'users/password_recovery_confirm.html', {'token': token})
+
+
+def verify_email_view(request):
+    raw_token = request.GET.get('token', '')
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest() if raw_token else ''
+
+    try:
+        vtoken = EmailVerificationToken.objects.select_related('user').get(
+            token_hash=token_hash, usado=False
+        )
+        if timezone.now() > vtoken.expira_en:
+            return render(request, 'users/verify_email_confirm.html', {'error': 'expired'})
+    except EmailVerificationToken.DoesNotExist:
+        return render(request, 'users/verify_email_confirm.html', {'error': 'invalid'})
+
+    vtoken.user.is_active = True
+    vtoken.user.save()
+    vtoken.usado = True
+    vtoken.save()
+    return render(request, 'users/verify_email_confirm.html', {'success': True})
 
 
 @login_required

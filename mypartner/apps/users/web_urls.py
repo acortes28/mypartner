@@ -8,6 +8,7 @@ urlpatterns = [
     path('register/', web_views.register_view, name='register'),
     path('password-recovery/', web_views.password_recovery_view, name='password-recovery'),
     path('password-recovery/confirm/', web_views.password_recovery_confirm_view, name='password-recovery-confirm'),
+    path('verify-email/', web_views.verify_email_view, name='verify-email'),
     path('menu/', web_views.menu_view, name='main-menu'),
     path('settings/', web_views.settings_view, name='user-settings'),
 ]
