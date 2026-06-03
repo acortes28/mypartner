@@ -185,7 +185,10 @@
       <div class="grid grid-cols-2 gap-3">
         <div>
           <label class="block text-xs font-semibold text-gray-600 mb-1">Monto (CLP) *</label>
-          <input type="number" name="monto" x-model="montoAdd" min="1" required
+          <input type="text" inputmode="numeric" name="monto" x-model="montoAdd" required
+                 @input="montoAdd = $event.target.value.replace(/[^\d]/g, ''); $event.target.value = montoAdd"
+                 @focus="$el.value = montoAdd || ''"
+                 @blur="$el.value = montoAdd ? parseInt(montoAdd).toLocaleString('es-CL') : ''"
                  class="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
         </div>
         <div>
@@ -314,7 +317,10 @@
           {% csrf_token %}
           <input type="hidden" name="action" value="modify">
           <input type="hidden" name="registro_id" value="{{ r.id }}">
-          <input type="number" name="monto" x-model="editMonto" min="1" required
+          <input type="text" inputmode="numeric" name="monto" x-model="editMonto" required
+                 @input="editMonto = $event.target.value.replace(/[^\d]/g, ''); $event.target.value = editMonto"
+                 @focus="$el.value = editMonto || ''"
+                 @blur="$el.value = editMonto ? parseInt(editMonto).toLocaleString('es-CL') : ''"
                  class="flex-1 px-3 py-2 rounded-xl border border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
           <button type="submit" class="px-4 py-2 bg-blue-600 text-white font-semibold rounded-xl text-sm">OK</button>
           <button type="button" @click="editId = null" class="px-3 py-2 border border-gray-200 rounded-xl text-sm">✕</button>
@@ -387,7 +393,10 @@
                 <tr class="border-b border-gray-50">
                   <td class="py-2 pr-3 text-xs text-gray-700" x-text="fila.username"></td>
                   <td class="py-2 px-2">
-                    <input type="number" x-model="fila.monto" @input="onMontoFila(idx)" min="1"
+                    <input type="text" inputmode="numeric" x-model="fila.monto"
+                           @input="fila.monto = $event.target.value.replace(/[^\d]/g, ''); $event.target.value = fila.monto; onMontoFila(idx)"
+                           @focus="$el.value = fila.monto || ''"
+                           @blur="$el.value = fila.monto ? parseInt(fila.monto).toLocaleString('es-CL') : ''"
                            :class="fila.error ? 'border-red-400 ring-1 ring-red-400' : 'border-gray-200'"
                            class="w-full px-2 py-1.5 rounded-lg border text-right text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                   </td>

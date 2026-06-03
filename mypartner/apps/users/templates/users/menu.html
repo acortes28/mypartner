@@ -21,7 +21,7 @@
   </div>
 
   <!-- Module cards -->
-  <div class="flex-1 bg-gray-50 rounded-t-3xl px-4 pt-6 pb-8">
+  <div class="flex-1 bg-gray-50 rounded-t-3xl px-4 pt-6 pb-28">
     <p class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">Módulos</p>
     <div class="space-y-3">
       <a href="{% url 'finances-dashboard' %}"
@@ -30,6 +30,30 @@
         <div>
           <p class="font-bold text-gray-900">Finanzas</p>
           <p class="text-xs text-gray-500">Gastos, ingresos y presupuesto</p>
+        </div>
+        <svg class="w-4 h-4 text-gray-300 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+      </a>
+
+      <a href="{% url 'finances-group-list' %}"
+         class="flex items-center gap-4 bg-white rounded-2xl px-5 py-4 shadow-sm hover:shadow-md transition-shadow border border-gray-100 group">
+        <div class="w-12 h-12 bg-orange-50 rounded-xl flex items-center justify-center text-2xl group-hover:scale-110 transition-transform">🏘️</div>
+        <div>
+          <p class="font-bold text-gray-900">Finanzas grupales</p>
+          <p class="text-xs text-gray-500">Gastos e ingresos compartidos</p>
+        </div>
+        <svg class="w-4 h-4 text-gray-300 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+      </a>
+
+      <a href="{% url 'finances-split' %}"
+         class="flex items-center gap-4 bg-white rounded-2xl px-5 py-4 shadow-sm hover:shadow-md transition-shadow border border-gray-100 group">
+        <div class="w-12 h-12 bg-yellow-50 rounded-xl flex items-center justify-center text-2xl group-hover:scale-110 transition-transform">🧾</div>
+        <div>
+          <p class="font-bold text-gray-900">División de gastos</p>
+          <p class="text-xs text-gray-500">Divide una cuenta entre el grupo</p>
         </div>
         <svg class="w-4 h-4 text-gray-300 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
@@ -59,18 +83,6 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
         </svg>
       </a>
-
-      <a href="{% url 'finances-group-list' %}"
-         class="flex items-center gap-4 bg-white rounded-2xl px-5 py-4 shadow-sm hover:shadow-md transition-shadow border border-gray-100 group">
-        <div class="w-12 h-12 bg-orange-50 rounded-xl flex items-center justify-center text-2xl group-hover:scale-110 transition-transform">🏘️</div>
-        <div>
-          <p class="font-bold text-gray-900">Finanzas grupales</p>
-          <p class="text-xs text-gray-500">Gastos e ingresos compartidos</p>
-        </div>
-        <svg class="w-4 h-4 text-gray-300 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-        </svg>
-      </a>
     </div>
 
     {% if unread_notifications_count > 0 %}
@@ -84,5 +96,16 @@
     </a>
     {% endif %}
   </div>
+</div>
+
+<!-- Botón flotante: Registrar pago -->
+<div class="fixed bottom-0 left-0 right-0 z-30 max-w-md mx-auto px-4 pb-6 pointer-events-none">
+  <a href="{% url 'finances-dashboard' %}?panel=gasto"
+     class="pointer-events-auto flex items-center justify-center gap-2 w-full py-4 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold text-sm rounded-2xl shadow-xl transition-colors">
+    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/>
+    </svg>
+    Registrar nuevo gasto
+  </a>
 </div>
 {% endblock %}

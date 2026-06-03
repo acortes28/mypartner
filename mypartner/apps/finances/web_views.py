@@ -736,3 +736,110 @@ def group_finances_view(request, group_id):
         'total_debo': total_debo,
         'total_me_deben': total_me_deben,
     })
+
+
+# ── Asistente de división de gastos ─────────────────────────────────────────
+
+@login_required
+def split_assistant_view(request):
+    memberships = _get_grupos_usuario(request.user)
+    if not memberships.exists():
+        messages.info(request, 'Para usar el asistente necesitas pertenecer a un grupo.')
+        return redirect('group-manage')
+
+    grupos_data = []
+    for m in memberships:
+        miembros = GrupoMiembro.objects.filter(grupo=m.grupo).select_related('usuario')
+        grupos_data.append({
+            'id': str(m.grupo_id),
+            'nombre': m.grupo.nombre,
+            'miembros': [
+                {'id': str(gm.usuario_id), 'username': gm.usuario.username}
+                for gm in miembros
+            ],
+        })
+
+    return render(request, 'finances/split.html', {
+        'grupos_json': json.dumps(grupos_data),
+        'current_user_id': str(request.user.id),
+        'current_username': request.user.username,
+    })
+
+
+@login_required
+def split_confirm_view(request):
+    if request.method != 'POST':
+        from django.http import JsonResponse
+        return JsonResponse({'error': 'Método no permitido.'}, status=405)
+
+    from django.http import JsonResponse
+
+    try:
+        data = json.loads(request.body)
+        grupo_id = data['grupo_id']
+        monto_total = int(data['monto_total'])
+        concepto_nombre = (data.get('concepto_nombre') or 'División de cuenta').strip()
+        distribuciones = data['distribuciones']
+
+        grupo = get_object_or_404(Grupo, id=grupo_id, activo=True)
+        if not GrupoMiembro.objects.filter(usuario=request.user, grupo=grupo).exists():
+            return JsonResponse({'error': 'No perteneces a este grupo.'}, status=403)
+
+        if monto_total <= 0:
+            return JsonResponse({'error': 'El monto total debe ser mayor a cero.'}, status=400)
+
+        with transaction.atomic():
+            concepto, _ = Concepto.objects.get_or_create(
+                grupo=grupo, nombre=concepto_nombre, tipo='Gasto',
+                defaults={'activo': True, 'usuario': None},
+            )
+            mov = Movimiento.objects.create(
+                tipo='Gasto', nombre=concepto_nombre,
+                detalle='Asistente de división de gastos',
+                monto=monto_total, concepto=concepto,
+                usuario=request.user, grupo=grupo,
+                fecha_hora=timezone.now(),
+            )
+            gastos_creados = []
+            for d in distribuciones:
+                if str(d['usuario_id']) == str(request.user.id):
+                    continue
+                monto_deudor = int(d['monto'])
+                if monto_deudor <= 0:
+                    continue
+                try:
+                    deudor = User.objects.get(id=d['usuario_id'])
+                except User.DoesNotExist:
+                    continue
+                if not GrupoMiembro.objects.filter(usuario=deudor, grupo=grupo).exists():
+                    continue
+                GastoCompartido.objects.create(
+                    movimiento=mov,
+                    usuario_acreedor=request.user,
+                    usuario_deudor=deudor,
+                    monto_pendiente=monto_deudor,
+                    grupo=grupo,
+                )
+                Notificacion.objects.create(
+                    titulo=(
+                        f'{request.user.username} te asignó ${monto_deudor:,} '
+                        f'en "{concepto_nombre}" ({grupo.nombre}).'
+                    ).replace(',', '.'),
+                    tipo=Notificacion.TIPO_GASTO_COMPARTIDO,
+                    referencia_id=mov.id,
+                    usuario=deudor,
+                )
+                gastos_creados.append({'username': d.get('username', ''), 'monto': monto_deudor})
+
+            crear_notificaciones_grupo(
+                grupo, Notificacion.TIPO_GASTO,
+                f'División de cuenta de ${monto_total:,} registrada por {request.user.username}'.replace(',', '.'),
+                referencia_id=mov.id, excluir_usuario=request.user,
+            )
+
+        return JsonResponse({'ok': True, 'gastos': gastos_creados})
+
+    except (KeyError, ValueError, json.JSONDecodeError) as e:
+        return JsonResponse({'error': f'Datos inválidos: {e}'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
