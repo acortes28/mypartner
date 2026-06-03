@@ -182,13 +182,12 @@ def budget_view(request):
                 monto = int(monto_str)
                 assert monto > 0 and nombre
 
-                with transaction.atomic():
-                    registro = RegistroPresupuesto.objects.create(
-                        tipo=tipo, concepto=concepto, nombre=nombre, detalle=detalle,
-                        fecha=fecha_str, monto=monto, usuario=request.user, grupo=None,
-                        periodicidad=periodicidad, fecha_fin=fecha_fin,
-                    )
+                campos_base = dict(
+                    tipo=tipo, nombre=nombre, fecha=fecha_str,
+                    periodicidad=periodicidad, fecha_fin=fecha_fin,
+                )
 
+                with transaction.atomic():
                     if dividir_presupuesto and grupo_division_id:
                         if not GrupoMiembro.objects.filter(
                             usuario=request.user, grupo_id=grupo_division_id, grupo__activo=True
@@ -203,40 +202,82 @@ def budget_view(request):
                         if monto_propietario < 0:
                             raise ValueError('La suma de montos supera el total del presupuesto.')
 
-                        divisiones_objs = [
-                            DivisionPresupuesto(
-                                registro_presupuesto=registro,
-                                grupo=grupo_div,
-                                usuario=request.user,
-                                monto=monto_propietario,
-                            )
-                        ]
+                        # 1. Presupuesto en el grupo (monto total)
+                        concepto_grupo, _ = Concepto.objects.get_or_create(
+                            grupo=grupo_div, nombre=concepto.nombre, tipo=tipo,
+                            defaults={'activo': True, 'usuario': None},
+                        )
+                        detalle_ref = f'Grupo: {grupo_div.nombre} · Total: ${monto:,}'.replace(',', '.')
+                        detalle_grupo = f'{detalle_ref}\n{detalle}'.strip() if detalle else detalle_ref
+                        registro_grupo = RegistroPresupuesto.objects.create(
+                            **campos_base, concepto=concepto_grupo,
+                            detalle=detalle_grupo, monto=monto,
+                            usuario=None, grupo=grupo_div,
+                        )
+
+                        # 2. Presupuesto personal del propietario (su porción)
+                        detalle_personal = f'{detalle_ref}\n{detalle}'.strip() if detalle else detalle_ref
+                        RegistroPresupuesto.objects.create(
+                            **campos_base, concepto=concepto,
+                            detalle=detalle_personal, monto=monto_propietario,
+                            usuario=request.user, grupo=None,
+                        )
+
+                        # 3. Presupuesto personal de cada otro usuario (su porción)
+                        usuarios_div = []
                         for d in divisiones_data:
                             user_div = User.objects.get(id=d['usuario_id'])
                             if not GrupoMiembro.objects.filter(
                                 usuario=user_div, grupo=grupo_div, grupo__activo=True
                             ).exists():
                                 raise ValueError(f'{user_div.username} no es miembro del grupo.')
+                            concepto_div, _ = Concepto.objects.get_or_create(
+                                usuario=user_div, nombre=concepto.nombre, tipo=tipo,
+                                defaults={'activo': True, 'grupo': None},
+                            )
+                            RegistroPresupuesto.objects.create(
+                                **campos_base, concepto=concepto_div,
+                                detalle=detalle_personal, monto=int(d['monto']),
+                                usuario=user_div, grupo=None,
+                            )
+                            usuarios_div.append((user_div, int(d['monto'])))
+
+                        # 4. DivisionPresupuesto apuntando al presupuesto del grupo
+                        divisiones_objs = [
+                            DivisionPresupuesto(
+                                registro_presupuesto=registro_grupo,
+                                grupo=grupo_div, usuario=request.user,
+                                monto=monto_propietario,
+                            )
+                        ]
+                        for user_div, monto_div in usuarios_div:
                             divisiones_objs.append(DivisionPresupuesto(
-                                registro_presupuesto=registro,
-                                grupo=grupo_div,
-                                usuario=user_div,
-                                monto=int(d['monto']),
+                                registro_presupuesto=registro_grupo,
+                                grupo=grupo_div, usuario=user_div,
+                                monto=monto_div,
                             ))
                         DivisionPresupuesto.objects.bulk_create(divisiones_objs)
 
-                        for d in divisiones_data:
-                            user_div = User.objects.get(id=d['usuario_id'])
+                        # 5. Notificaciones a los otros usuarios
+                        for user_div, monto_div in usuarios_div:
                             Notificacion.objects.create(
                                 titulo=(
                                     f'{request.user.username} te asignó '
-                                    f'${int(d["monto"]):,} del presupuesto "{registro.nombre}" '
+                                    f'${monto_div:,} del presupuesto "{nombre}" '
                                     f'en {grupo_div.nombre}'
                                 ).replace(',', '.'),
                                 tipo=Notificacion.TIPO_PRESUPUESTO,
-                                referencia_id=registro.id,
+                                referencia_id=registro_grupo.id,
                                 usuario=user_div,
                             )
+
+                    else:
+                        # Sin división: presupuesto personal simple
+                        RegistroPresupuesto.objects.create(
+                            **campos_base, concepto=concepto,
+                            detalle=detalle, monto=monto,
+                            usuario=request.user, grupo=None,
+                        )
 
                 messages.success(request, 'Registro de presupuesto agregado.')
             except Exception as e:
@@ -444,6 +485,7 @@ def add_movement_view(request):
         grupo_id = request.POST.get('grupo_id', '').strip()
         es_compartido = request.POST.get('es_compartido') == '1'
         usuario_deudor_id = request.POST.get('usuario_deudor', '').strip()
+        monto_compartido_str = request.POST.get('monto_compartido', '').replace('.', '').replace(',', '')
 
         try:
             monto = int(monto_str)
@@ -473,9 +515,10 @@ def add_movement_view(request):
 
                     concepto_grupal = None
                     if concepto:
-                        concepto_grupal = Concepto.objects.filter(
-                            grupo=grupo, nombre=concepto.nombre, tipo=concepto.tipo, activo=True
-                        ).first()
+                        concepto_grupal, _ = Concepto.objects.get_or_create(
+                            grupo=grupo, nombre=concepto.nombre, tipo=concepto.tipo,
+                            defaults={'activo': True, 'usuario': None},
+                        )
 
                     mov_grupo = Movimiento.objects.create(
                         tipo=tipo, nombre=nombre, detalle=detalle,
@@ -497,6 +540,8 @@ def add_movement_view(request):
                     crear_notificaciones_grupo(grupo, tipo_notif, titulo, referencia_id=mov_grupo.id, excluir_usuario=request.user)
 
                     if es_compartido and tipo == 'Gasto' and usuario_deudor_id:
+                        monto_pendiente = int(monto_compartido_str) if monto_compartido_str.isdigit() else monto
+                        monto_pendiente = max(1, min(monto_pendiente, monto - 1))
                         miembro = GrupoMiembro.objects.select_related('usuario').get(
                             usuario_id=usuario_deudor_id, grupo=grupo
                         )
@@ -504,11 +549,11 @@ def add_movement_view(request):
                             movimiento=mov_grupo,
                             usuario_acreedor=request.user,
                             usuario_deudor=miembro.usuario,
-                            monto_pendiente=monto,
+                            monto_pendiente=monto_pendiente,
                             grupo=grupo,
                         )
                         Notificacion.objects.create(
-                            titulo=f'{request.user.username} te compartió un gasto de ${monto:,} por {concepto_nombre}.'.replace(',', '.'),
+                            titulo=f'{request.user.username} te compartió un gasto de ${monto_pendiente:,} por {concepto_nombre}.'.replace(',', '.'),
                             tipo=Notificacion.TIPO_GASTO_COMPARTIDO,
                             referencia_id=mov_grupo.id,
                             usuario=miembro.usuario,
@@ -572,11 +617,44 @@ def gastos_compartidos_view(request):
 
 
 @login_required
+def group_finances_list_view(request):
+    hoy = date.today()
+    mes_inicio = hoy.replace(day=1)
+    memberships = _get_grupos_usuario(request.user)
+    grupos_data = []
+    for m in memberships:
+        gasto_mes = (
+            Movimiento.objects
+            .filter(grupo=m.grupo, tipo='Gasto',
+                    fecha_hora__date__gte=mes_inicio, fecha_hora__date__lte=hoy)
+            .aggregate(t=Sum('monto'))['t'] or 0
+        )
+        ingreso_mes = (
+            Movimiento.objects
+            .filter(grupo=m.grupo, tipo='Ingreso',
+                    fecha_hora__date__gte=mes_inicio, fecha_hora__date__lte=hoy)
+            .aggregate(t=Sum('monto'))['t'] or 0
+        )
+        miembros_count = GrupoMiembro.objects.filter(grupo=m.grupo).count()
+        grupos_data.append({
+            'grupo': m.grupo,
+            'gasto_mes': gasto_mes,
+            'ingreso_mes': ingreso_mes,
+            'saldo_mes': ingreso_mes - gasto_mes,
+            'miembros_count': miembros_count,
+            'rol': m.rol,
+        })
+    return render(request, 'finances/group_finances_list.html', {
+        'grupos_data': grupos_data,
+    })
+
+
+@login_required
 def group_finances_view(request, group_id):
     grupo = get_object_or_404(Grupo, id=group_id, activo=True)
     if not GrupoMiembro.objects.filter(usuario=request.user, grupo=grupo).exists():
         messages.error(request, 'No tienes acceso a este grupo.')
-        return redirect('finances-dashboard')
+        return redirect('finances-group-list')
 
     hoy = date.today()
     mes_inicio = hoy.replace(day=1)
@@ -598,6 +676,48 @@ def group_finances_view(request, group_id):
         .order_by('-fecha_hora')[:10]
     )
 
+    miembros = (
+        GrupoMiembro.objects
+        .filter(grupo=grupo)
+        .select_related('usuario')
+        .order_by('usuario__username')
+    )
+
+    # Presupuestos del grupo con divisiones para este usuario
+    presupuestos = (
+        RegistroPresupuesto.objects
+        .filter(grupo=grupo)
+        .select_related('concepto')
+        .prefetch_related('divisiones__usuario')
+        .order_by('-tipo', '-monto')
+    )
+    mis_divisiones = (
+        DivisionPresupuesto.objects
+        .filter(grupo=grupo, usuario=request.user)
+        .select_related('registro_presupuesto__concepto')
+        .order_by('-registro_presupuesto__monto')
+    )
+    total_presupuesto_gasto = sum(
+        p.monto for p in presupuestos if p.tipo == 'Gasto'
+    )
+    total_presupuesto_ingreso = sum(
+        p.monto for p in presupuestos if p.tipo == 'Ingreso'
+    )
+
+    # Gastos compartidos pendientes del grupo para el usuario actual
+    pendientes_pago = (
+        GastoCompartido.objects
+        .filter(usuario_deudor=request.user, grupo=grupo, pagado=False)
+        .select_related('movimiento__concepto', 'usuario_acreedor')
+    )
+    pendientes_cobro = (
+        GastoCompartido.objects
+        .filter(usuario_acreedor=request.user, grupo=grupo, pagado=False)
+        .select_related('movimiento__concepto', 'usuario_deudor')
+    )
+    total_debo = pendientes_pago.aggregate(t=Sum('monto_pendiente'))['t'] or 0
+    total_me_deben = pendientes_cobro.aggregate(t=Sum('monto_pendiente'))['t'] or 0
+
     return render(request, 'finances/group_finances.html', {
         'grupo': grupo,
         'gasto_total': gasto_total,
@@ -606,4 +726,13 @@ def group_finances_view(request, group_id):
         'ingreso_mes': ingreso_mes,
         'saldo_mes': saldo_mes,
         'ultimos_movimientos': ultimos,
+        'miembros': miembros,
+        'presupuestos': presupuestos,
+        'mis_divisiones': mis_divisiones,
+        'total_presupuesto_gasto': total_presupuesto_gasto,
+        'total_presupuesto_ingreso': total_presupuesto_ingreso,
+        'pendientes_pago': pendientes_pago,
+        'pendientes_cobro': pendientes_cobro,
+        'total_debo': total_debo,
+        'total_me_deben': total_me_deben,
     })

@@ -356,10 +356,11 @@ class ReplicarMovimientoView(APIView):
 
         concepto_grupal = None
         if mov_personal.concepto:
-            concepto_grupal = Concepto.objects.filter(
+            concepto_grupal, _ = Concepto.objects.get_or_create(
                 grupo=grupo, nombre=mov_personal.concepto.nombre,
-                tipo=mov_personal.concepto.tipo, activo=True,
-            ).first()
+                tipo=mov_personal.concepto.tipo,
+                defaults={'activo': True, 'usuario': None},
+            )
 
         mov_grupo = Movimiento.objects.create(
             tipo=mov_personal.tipo, nombre=mov_personal.nombre,

@@ -1,32 +1,63 @@
 {% extends 'base.html' %}
-{% block title %}Gestionar grupo — MyPartner{% endblock %}
+{% block title %}Mis grupos — MyPartner{% endblock %}
 
 {% block content %}
-<div class="px-4 py-6">
+<div class="px-4 py-6" x-data="{ showCreate: false }">
   <div class="flex items-center gap-3 mb-6">
     <a href="{% url 'user-settings' %}" class="p-2 text-gray-500 hover:text-gray-700">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
       </svg>
     </a>
-    <h1 class="text-xl font-bold text-gray-900">Gestionar Grupo</h1>
+    <h1 class="text-xl font-bold text-gray-900">Mis grupos</h1>
   </div>
 
-  {% if not membership %}
-  <!-- No group -->
-  <div class="bg-white rounded-2xl shadow-sm p-6 text-center mb-6">
+  <!-- Lista de grupos -->
+  {% if memberships %}
+  <div class="space-y-3 mb-4">
+    {% for m in memberships %}
+    <a href="{% url 'group-manage-detail' m.grupo.id %}"
+       class="flex items-center gap-4 bg-white rounded-2xl px-5 py-4 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+      <div class="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center text-xl flex-shrink-0">👥</div>
+      <div class="flex-1 min-w-0">
+        <p class="font-bold text-gray-900 truncate">{{ m.grupo.nombre }}</p>
+        {% if m.grupo.descripcion %}
+        <p class="text-xs text-gray-400 truncate">{{ m.grupo.descripcion }}</p>
+        {% endif %}
+        <span class="inline-flex items-center mt-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold
+          {% if m.rol == 'admin' %}bg-green-100 text-green-800{% else %}bg-gray-100 text-gray-600{% endif %}">
+          {% if m.rol == 'admin' %}👑 Admin{% else %}Miembro{% endif %}
+        </span>
+      </div>
+      <svg class="w-4 h-4 text-gray-300 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+      </svg>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="bg-white rounded-2xl shadow-sm p-8 text-center mb-4">
     <div class="text-5xl mb-3">👥</div>
-    <p class="text-gray-700 font-semibold mb-1">Aún no perteneces a ningún grupo</p>
-    <p class="text-gray-500 text-sm">Crea un grupo o espera una invitación.</p>
+    <p class="font-semibold text-gray-700 mb-1">Aún no perteneces a ningún grupo</p>
+    <p class="text-sm text-gray-400">Crea un grupo o espera una invitación de otro usuario.</p>
   </div>
+  {% endif %}
 
-  <div class="bg-white rounded-2xl shadow-sm p-6" x-data="{ open: false }">
-    <button @click="open = !open"
-            class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-sm transition-colors">
-      + Crear un nuevo grupo
+  <!-- Crear grupo -->
+  <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+    <button @click="showCreate = !showCreate"
+            class="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-gray-50 transition-colors">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 bg-blue-100 rounded-xl flex items-center justify-center text-base">+</div>
+        <span class="font-semibold text-gray-900 text-sm">Crear nuevo grupo</span>
+      </div>
+      <svg class="w-4 h-4 text-gray-400 transition-transform" :class="showCreate ? 'rotate-180' : ''"
+           fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/>
+      </svg>
     </button>
-    <div x-show="open" x-transition class="mt-4">
-      <form method="post" class="space-y-4">
+    <div x-show="showCreate" x-transition class="px-5 pb-5 border-t border-gray-100">
+      <form method="post" class="space-y-4 pt-4">
         {% csrf_token %}
         <input type="hidden" name="action" value="create_group">
         <div>
@@ -40,113 +71,12 @@
                     class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-600 text-sm resize-none"></textarea>
         </div>
         <button type="submit"
-                class="w-full py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl text-sm">
+                class="w-full py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl text-sm transition-colors">
           Crear grupo
         </button>
       </form>
     </div>
   </div>
 
-  {% else %}
-  <!-- Has group -->
-  <div class="bg-white rounded-2xl shadow-sm p-5 mb-4">
-    <h2 class="font-extrabold text-gray-900 text-lg">{{ membership.grupo.nombre }}</h2>
-    {% if membership.grupo.descripcion %}
-    <p class="text-gray-500 text-sm mt-1">{{ membership.grupo.descripcion }}</p>
-    {% endif %}
-    <span class="inline-flex items-center mt-2 px-2.5 py-0.5 rounded-full text-xs font-bold
-      {% if user_role == 'admin' %}bg-green-100 text-green-800{% else %}bg-gray-100 text-gray-700{% endif %}">
-      {% if user_role == 'admin' %}👑 Administrador{% else %}Miembro{% endif %}
-    </span>
-  </div>
-
-  <!-- Members list -->
-  <div class="bg-white rounded-2xl shadow-sm overflow-hidden mb-4">
-    <div class="px-5 py-3 bg-gray-50 border-b border-gray-100">
-      <p class="text-xs font-bold text-gray-500 uppercase tracking-wide">Miembros ({{ miembros|length }})</p>
-    </div>
-    {% for m in miembros %}
-    <div class="flex items-center gap-3 px-5 py-3.5 border-b border-gray-50 last:border-0">
-      <div class="w-9 h-9 bg-green-100 rounded-full flex items-center justify-center text-sm font-bold text-green-700 flex-shrink-0">
-        {{ m.usuario.first_name|first|upper }}
-      </div>
-      <div class="flex-1 min-w-0">
-        <p class="font-semibold text-gray-900 text-sm truncate">
-          {{ m.usuario.first_name }} {{ m.usuario.last_name }}
-          {% if m.usuario == user %}<span class="text-gray-400 font-normal">(tú)</span>{% endif %}
-        </p>
-        <p class="text-xs text-gray-400">@{{ m.usuario.username }}</p>
-      </div>
-      <div class="flex items-center gap-2">
-        <span class="text-xs font-semibold {% if m.rol == 'admin' %}text-green-700{% else %}text-gray-400{% endif %}">
-          {% if m.rol == 'admin' %}Admin{% else %}Miembro{% endif %}
-        </span>
-        {% if user_role == 'admin' and m.usuario != user %}
-        <div class="flex gap-1" x-data>
-          <!-- Set role -->
-          <form method="post" class="inline">
-            {% csrf_token %}
-            <input type="hidden" name="action" value="set_role">
-            <input type="hidden" name="usuario_id" value="{{ m.usuario.id }}">
-            <input type="hidden" name="rol" value="{% if m.rol == 'admin' %}miembro{% else %}admin{% endif %}">
-            <button type="submit"
-                    class="px-2.5 py-1 rounded-lg text-xs font-semibold border transition-colors
-                    {% if m.rol == 'admin' %}border-yellow-300 text-yellow-700 hover:bg-yellow-50{% else %}border-green-300 text-green-700 hover:bg-green-50{% endif %}">
-              {% if m.rol == 'admin' %}Quitar Admin{% else %}Hacer Admin{% endif %}
-            </button>
-          </form>
-          <!-- Remove -->
-          <button type="button"
-                  @click="confirmTitle = 'Expulsar miembro'; confirmMessage = '¿Expulsar a {{ m.usuario.username }} del grupo?'; confirmBtnText = 'Expulsar'; confirmAction = ''; confirmFields = {action: 'remove_member', usuario_id: '{{ m.usuario.id }}'}; confirmModal = true"
-                  class="px-2.5 py-1 rounded-lg text-xs font-semibold border border-red-200 text-red-600 hover:bg-red-50 transition-colors">
-            Quitar
-          </button>
-        </div>
-        {% endif %}
-      </div>
-    </div>
-    {% endfor %}
-  </div>
-
-  <!-- Admin actions -->
-  {% if user_role == 'admin' %}
-  <!-- Invite -->
-  <div class="bg-white rounded-2xl shadow-sm p-5 mb-4" x-data="{ open: false }">
-    <button @click="open = !open"
-            class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-sm">
-      + Agregar miembro
-    </button>
-    <div x-show="open" x-transition class="mt-4">
-      <form method="post" class="space-y-3">
-        {% csrf_token %}
-        <input type="hidden" name="action" value="invite_member">
-        <input type="text" name="username" required placeholder="Nombre de usuario"
-               class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-600 text-sm">
-        <textarea name="comentario" rows="2" placeholder="Mensaje (opcional)"
-                  class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-600 text-sm resize-none"></textarea>
-        <button type="submit"
-                class="w-full py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl text-sm">
-          Enviar invitación
-        </button>
-      </form>
-    </div>
-  </div>
-
-  <!-- Delete group -->
-  <button type="button"
-          @click="confirmTitle = 'Eliminar grupo'; confirmMessage = '¿Eliminar el grupo permanentemente? Esta acción no se puede deshacer y se perderán todos los datos.'; confirmBtnText = 'Eliminar grupo'; confirmAction = ''; confirmFields = {action: 'delete_group'}; confirmModal = true"
-          class="w-full py-3 border-2 border-red-300 text-red-600 font-bold rounded-xl text-sm hover:bg-red-50 transition-colors">
-    🗑 Eliminar grupo
-  </button>
-
-  {% else %}
-  <!-- Leave group -->
-  <button type="button"
-          @click="confirmTitle = 'Abandonar grupo'; confirmMessage = '¿Abandonar el grupo? Dejarás de tener acceso a sus finanzas y datos.'; confirmBtnText = 'Abandonar'; confirmAction = ''; confirmFields = {action: 'leave_group'}; confirmModal = true"
-          class="w-full py-3 border-2 border-orange-300 text-orange-600 font-bold rounded-xl text-sm hover:bg-orange-50 transition-colors">
-    Abandonar grupo
-  </button>
-  {% endif %}
-  {% endif %}
 </div>
 {% endblock %}

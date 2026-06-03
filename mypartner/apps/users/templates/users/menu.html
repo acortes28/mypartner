@@ -59,6 +59,18 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
         </svg>
       </a>
+
+      <a href="{% url 'finances-group-list' %}"
+         class="flex items-center gap-4 bg-white rounded-2xl px-5 py-4 shadow-sm hover:shadow-md transition-shadow border border-gray-100 group">
+        <div class="w-12 h-12 bg-orange-50 rounded-xl flex items-center justify-center text-2xl group-hover:scale-110 transition-transform">🏘️</div>
+        <div>
+          <p class="font-bold text-gray-900">Finanzas grupales</p>
+          <p class="text-xs text-gray-500">Gastos e ingresos compartidos</p>
+        </div>
+        <svg class="w-4 h-4 text-gray-300 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+      </a>
     </div>
 
     {% if unread_notifications_count > 0 %}

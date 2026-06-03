@@ -109,17 +109,12 @@
   <!-- Formulario agregar -->
   <div x-show="showAdd" x-transition class="bg-white rounded-2xl shadow-sm p-5 mb-4">
     <h3 class="font-bold text-gray-900 mb-4">Nuevo registro</h3>
-    <form method="post" class="space-y-3" @submit.prevent="
-      $el.querySelector('[name=divisiones_json]').value = divisionesJson;
-      $el.querySelector('[name=dividir_presupuesto]').value = dividirPresupuesto ? '1' : '0';
-      $el.querySelector('[name=grupo_division_id]').value = grupoDiv;
-      $el.submit()
-    ">
+    <form id="budget-add-form" method="post" class="space-y-3">
       {% csrf_token %}
       <input type="hidden" name="action" value="add">
-      <input type="hidden" name="dividir_presupuesto" value="0">
-      <input type="hidden" name="grupo_division_id" value="">
-      <input type="hidden" name="divisiones_json" value="[]">
+      <input type="hidden" name="dividir_presupuesto" :value="dividirPresupuesto ? '1' : '0'">
+      <input type="hidden" name="grupo_division_id" :value="grupoDiv">
+      <input type="hidden" name="divisiones_json" :value="divisionesJson">
 
       <div class="grid grid-cols-2 gap-3">
         <div>
@@ -247,7 +242,7 @@
 
       <div class="flex gap-2">
         <button type="button"
-                @click="dividirPresupuesto ? (showDivision = true) : $el.closest('form').dispatchEvent(new Event('submit', {cancelable: true, bubbles: true}))"
+                @click="dividirPresupuesto ? (showDivision = true) : document.getElementById('budget-add-form').submit()"
                 class="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-sm">
           Guardar
         </button>
@@ -281,6 +276,9 @@
             {{ r.nombre }} · {{ r.fecha|date:"d/m/Y" }}
             {% if r.fecha_fin %} · <span class="text-orange-500 font-medium">Hasta {{ r.fecha_fin|date:"m/Y" }}</span>{% endif %}
           </p>
+          {% if r.detalle %}
+          <p class="text-xs text-blue-600 font-medium mt-0.5">{{ r.detalle|truncatechars:60 }}</p>
+          {% endif %}
           <span class="text-xs font-semibold {% if r.tipo == 'Gasto' %}text-red-600{% else %}text-green-600{% endif %}">{{ r.tipo }}</span>
         </div>
         <div class="flex items-center gap-3">
@@ -435,18 +433,7 @@
         <!-- Botón finalizar -->
         <button type="button"
                 :disabled="!divisionValida"
-                @click="
-                  showDivision = false;
-                  $nextTick(() => {
-                    const form = document.querySelector('form[data-budget-form]');
-                    if (form) {
-                      form.querySelector('[name=divisiones_json]').value = divisionesJson;
-                      form.querySelector('[name=dividir_presupuesto]').value = '1';
-                      form.querySelector('[name=grupo_division_id]').value = grupoDiv;
-                      form.submit();
-                    }
-                  })
-                "
+                @click="showDivision = false; $nextTick(() => document.getElementById('budget-add-form').submit())"
                 class="w-full py-3.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold rounded-xl text-sm">
           Finalizar
         </button>
