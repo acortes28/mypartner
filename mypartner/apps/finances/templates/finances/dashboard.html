@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% load finance_filters %}
-{% block title %}Finanzas — MyPartner{% endblock %}
+{% block title %}Mis Finanzas — MyPartner{% endblock %}
 {% block main_class %}{% endblock %}
 
 {% block extra_head %}
@@ -8,33 +8,44 @@
 {% endblock %}
 
 {% block content %}
-<!-- Un único x-data que abarca el contenido, la barra inferior y los paneles -->
 <div x-data="{
   panel: null,
+  paso: 1,
+  nombreMov: '',
+  conceptoMov: '',
+  montoMov: '',
+  detalleMov: '',
+  registrarEnGrupo: false,
+  grupoId: '',
   esCompartido: false,
-  nombreGasto: '',
-  conceptoGasto: '',
-  montoGasto: '',
-  detalleGasto: '',
-  compartirMitad: false,
-  montoCompartido: '',
-  abrirPaso2() {
-    if (this.esCompartido) { this.panel = 'gasto_paso2'; }
+  usuarioDeudor: '',
+  get miembrosGrupo() {
+    if (!this.grupoId) return [];
+    return (window._miembrosPorGrupo || {})[this.grupoId] || [];
+  },
+  get tieneOtrosMiembros() { return this.miembrosGrupo.length > 0; },
+  avanzarPaso2Gasto() {
+    if (this.registrarEnGrupo) { this.paso = 2; }
     else { this.$refs.formGasto.submit(); }
   },
-  onMitadChange() {
-    if (this.compartirMitad && this.montoGasto) {
-      this.montoCompartido = Math.floor(parseInt(this.montoGasto) / 2);
-    } else if (!this.compartirMitad) { this.montoCompartido = ''; }
-  }
+  avanzarPaso3() {
+    if (this.esCompartido && this.tieneOtrosMiembros) { this.paso = 3; }
+    else { this.$refs.formGastoPaso2.submit(); }
+  },
+  avanzarPaso2Ingreso() {
+    if (this.registrarEnGrupo) { this.paso = 2; }
+    else { this.$refs.formIngreso.submit(); }
+  },
+  abrirGasto() { this.panel='gasto'; this.paso=1; this.registrarEnGrupo=false; this.esCompartido=false; this.grupoId=''; this.usuarioDeudor=''; },
+  abrirIngreso() { this.panel='ingreso'; this.paso=1; this.registrarEnGrupo=false; this.grupoId=''; }
 }" class="pb-28">
 
   <!-- Header -->
   <div class="bg-green-800 text-white px-4 pt-2 pb-6">
     <div class="flex items-center justify-between mb-3">
       <div>
-        <p class="text-green-300 text-xs font-semibold uppercase tracking-wide">{{ grupo.nombre }}</p>
-        <h1 class="text-xl font-extrabold">Finanzas</h1>
+        <p class="text-green-300 text-xs font-semibold uppercase tracking-wide">Personal</p>
+        <h1 class="text-xl font-extrabold">Mis Finanzas</h1>
       </div>
       <div class="flex gap-2">
         <a href="{% url 'finances-budget' %}"
@@ -52,7 +63,6 @@
       </div>
     </div>
 
-    <!-- Switch Histórico / Mensual + Mis pendientes -->
     <div class="flex items-center justify-between mb-4">
       <div class="flex bg-green-900/50 rounded-xl p-1">
         <a href="?vista=historico"
@@ -66,15 +76,15 @@
           Mensual
         </a>
       </div>
+      {% if pendientes_count %}
       <a href="{% url 'finances-shared' %}"
          class="relative px-3 py-1.5 bg-green-700 hover:bg-green-600 rounded-lg text-xs font-semibold transition-colors">
         Mis pendientes
-        {% if pendientes_count %}
         <span class="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
           {{ pendientes_count }}
         </span>
-        {% endif %}
       </a>
+      {% endif %}
     </div>
 
     <!-- KPI Cards -->
@@ -88,15 +98,11 @@
       <div class="grid grid-cols-2 gap-3">
         <div class="bg-green-700/50 rounded-2xl p-4 backdrop-blur-sm">
           <p class="text-green-300 text-xs font-semibold mb-1">Saldo restante</p>
-          <p class="text-xl font-extrabold {% if saldo_restante < 0 %}text-red-300{% else %}text-white{% endif %}">
-            {{ saldo_restante|clp }}
-          </p>
+          <p class="text-xl font-extrabold {% if saldo_restante < 0 %}text-red-300{% endif %}">{{ saldo_restante|clp }}</p>
         </div>
         <div class="bg-green-700/50 rounded-2xl p-4 backdrop-blur-sm">
           <p class="text-green-300 text-xs font-semibold mb-1">Desviación</p>
-          <p class="text-xl font-extrabold {% if desviacion < 0 %}text-red-300{% else %}text-white{% endif %}">
-            {{ desviacion|clp }}
-          </p>
+          <p class="text-xl font-extrabold {% if desviacion < 0 %}text-red-300{% endif %}">{{ desviacion|clp }}</p>
         </div>
       </div>
     </div>
@@ -116,6 +122,7 @@
     </div>
     {% endif %}
 
+    <!-- Últimos movimientos personales -->
     <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
       <div class="flex items-center justify-between px-5 py-3 bg-gray-50 border-b border-gray-100">
         <p class="text-xs font-bold text-gray-500 uppercase tracking-wide">Últimos movimientos</p>
@@ -130,7 +137,7 @@
           </div>
           <div class="flex-1 min-w-0">
             <p class="text-sm font-semibold text-gray-900 truncate">{{ m.nombre }}</p>
-            <p class="text-xs text-gray-400">{{ m.concepto.nombre|default:"Desconocido" }} · {{ m.usuario.username }}</p>
+            <p class="text-xs text-gray-400">{{ m.concepto.nombre|default:"Sin concepto" }}</p>
           </div>
           <div class="text-right">
             <p class="text-sm font-bold {% if m.tipo == 'Gasto' %}text-red-600{% else %}text-green-600{% endif %}">
@@ -144,12 +151,31 @@
         <p class="text-center py-8 text-gray-400 text-sm">Sin movimientos registrados</p>
       {% endif %}
     </div>
+
+    <!-- Resumen de grupos -->
+    {% if grupos_resumen %}
+    <div>
+      <p class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Mis grupos</p>
+      <div class="space-y-2">
+        {% for g in grupos_resumen %}
+        <a href="{% url 'finances-group' g.grupo.id %}"
+           class="flex items-center justify-between bg-white rounded-2xl shadow-sm px-5 py-4 hover:bg-gray-50 transition-colors">
+          <div>
+            <p class="text-sm font-bold text-gray-900">{{ g.grupo.nombre }}</p>
+            <p class="text-xs text-gray-400">Gasto mes actual</p>
+          </div>
+          <p class="text-sm font-extrabold text-red-600">{{ g.gasto_mes|clp }}</p>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
   </div>
 
-  <!-- ─── Barra inferior fija ─── DENTRO del x-data -->
+  <!-- Barra inferior -->
   <div class="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-30">
     <div class="max-w-md mx-auto grid grid-cols-3">
-      <button @click="panel = panel === 'gasto' ? null : 'gasto'"
+      <button @click="abrirGasto()"
               :class="panel === 'gasto' ? 'bg-red-50 text-red-700' : 'text-gray-600 hover:bg-gray-50'"
               class="flex flex-col items-center py-3 text-xs font-semibold transition-colors gap-1">
         <span class="text-xl">💸</span>Añadir Gasto
@@ -158,7 +184,7 @@
          class="flex flex-col items-center py-3 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors gap-1">
         <span class="text-xl">📋</span>Ver movimientos
       </a>
-      <button @click="panel = panel === 'ingreso' ? null : 'ingreso'"
+      <button @click="abrirIngreso()"
               :class="panel === 'ingreso' ? 'bg-green-50 text-green-700' : 'text-gray-600 hover:bg-gray-50'"
               class="flex flex-col items-center py-3 text-xs font-semibold transition-colors gap-1">
         <span class="text-xl">💵</span>Añadir Ingreso
@@ -166,163 +192,249 @@
     </div>
   </div>
 
-  <!-- ─── Panel Añadir Gasto (Paso 1) ─── DENTRO del x-data -->
+  <!-- ═══ PANEL GASTO ═══ -->
   <div x-show="panel === 'gasto'" x-cloak
        class="fixed inset-0 bg-black/50 z-40 flex items-end justify-center"
        @click.self="panel = null">
     <div class="bg-white rounded-t-2xl w-full max-w-md p-6 slide-up">
-      <div class="flex justify-between items-center mb-5">
-        <h3 class="font-bold text-gray-900 text-lg">Añadir Gasto</h3>
-        <button @click="panel = null" class="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
-      </div>
-      <form x-ref="formGasto" method="post" action="{% url 'finances-add-movement' %}" class="space-y-4">
-        {% csrf_token %}
-        <input type="hidden" name="tipo" value="Gasto">
-        <div>
-          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Nombre *</label>
-          <input type="text" name="nombre" x-model="nombreGasto" required
-                 class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-red-400 text-sm">
+
+      <!-- Paso 1 -->
+      <div x-show="paso === 1">
+        <div class="flex justify-between items-center mb-5">
+          <h3 class="font-bold text-gray-900 text-lg">Añadir Gasto</h3>
+          <button @click="panel = null" class="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
         </div>
-        <div>
-          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Concepto *</label>
-          <select name="concepto" required @change="conceptoGasto = $event.target.value"
-                  class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-600 text-sm bg-white">
-            <option value="">Selecciona concepto</option>
-            {% for c in conceptos_gasto %}
-            <option value="{{ c.id }}">{{ c.nombre }}</option>
-            {% empty %}
-            {% endfor %}
-          </select>
-          {% if not conceptos_gasto %}
-          <p class="text-xs text-yellow-600 mt-1">⚠ Debes crear conceptos de tipo Gasto primero.</p>
+        <form x-ref="formGasto" method="post" action="{% url 'finances-add-movement' %}" class="space-y-4">
+          {% csrf_token %}
+          <input type="hidden" name="tipo" value="Gasto">
+          <input type="hidden" name="registrar_en_grupo" :value="registrarEnGrupo ? '1' : '0'">
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Nombre *</label>
+            <input type="text" name="nombre" x-model="nombreMov" required
+                   class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-red-400 text-sm">
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Concepto</label>
+            <select name="concepto" @change="conceptoMov = $event.target.value"
+                    class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-600 text-sm bg-white">
+              <option value="">Sin concepto</option>
+              {% for c in conceptos_gasto %}
+              <option value="{{ c.id }}">{{ c.nombre }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Monto (CLP) *</label>
+            <input type="number" name="monto" x-model="montoMov" min="1" required
+                   class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-red-400 text-sm">
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Detalle</label>
+            <input type="text" name="detalle" x-model="detalleMov"
+                   class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-red-400 text-sm">
+          </div>
+          {% if tiene_grupos %}
+          <label class="flex items-center gap-2.5 cursor-pointer select-none">
+            <input type="checkbox" x-model="registrarEnGrupo" class="w-4 h-4 accent-green-700 rounded">
+            <span class="text-sm text-gray-700 font-medium">Registrar en un grupo</span>
+          </label>
           {% endif %}
+          <button type="button" @click="avanzarPaso2Gasto()"
+                  class="w-full py-3.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-sm">
+            Registrar gasto
+          </button>
+        </form>
+      </div>
+
+      <!-- Paso 2 -->
+      <div x-show="paso === 2">
+        <div class="flex justify-between items-center mb-5">
+          <div>
+            <p class="text-xs text-gray-400 font-medium mb-0.5">Paso 2 de 2{{ esCompartido ? ' · 3' : '' }}</p>
+            <h3 class="font-bold text-gray-900 text-lg">Registrar en grupo</h3>
+          </div>
+          <button @click="paso = 1" class="text-gray-400 hover:text-gray-600 text-sm font-semibold">← Volver</button>
         </div>
-        <div>
-          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Monto (CLP) *</label>
-          <input type="number" name="monto" x-model="montoGasto" min="1" required
-                 class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-red-400 text-sm">
+        <form x-ref="formGastoPaso2" method="post" action="{% url 'finances-add-movement' %}" class="space-y-4">
+          {% csrf_token %}
+          <input type="hidden" name="tipo" value="Gasto">
+          <input type="hidden" name="nombre" :value="nombreMov">
+          <input type="hidden" name="concepto" :value="conceptoMov">
+          <input type="hidden" name="monto" :value="montoMov">
+          <input type="hidden" name="detalle" :value="detalleMov">
+          <input type="hidden" name="registrar_en_grupo" value="1">
+          <input type="hidden" name="grupo_id" :value="grupoId">
+          <input type="hidden" name="es_compartido" :value="esCompartido ? '1' : '0'">
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Grupo *</label>
+            <select x-model="grupoId" required
+                    class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-600 text-sm bg-white">
+              <option value="">Selecciona un grupo</option>
+              {% for g in grupos_usuario %}
+              <option value="{{ g.id }}">{{ g.nombre }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <label class="flex items-center gap-2.5 cursor-pointer select-none"
+                 :class="!tieneOtrosMiembros && 'opacity-40 pointer-events-none'">
+            <input type="checkbox" x-model="esCompartido" :disabled="!tieneOtrosMiembros"
+                   class="w-4 h-4 accent-red-600 rounded">
+            <span class="text-sm text-gray-700 font-medium">Es compartido</span>
+          </label>
+          <template x-if="!tieneOtrosMiembros && grupoId">
+            <p class="text-xs text-yellow-600">⚠ El grupo no tiene otros miembros.</p>
+          </template>
+          <button type="button" @click="avanzarPaso3()"
+                  :disabled="!grupoId"
+                  class="w-full py-3.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-bold rounded-xl text-sm">
+            Registrar gasto
+          </button>
+        </form>
+      </div>
+
+      <!-- Paso 3 -->
+      <div x-show="paso === 3">
+        <div class="flex justify-between items-center mb-5">
+          <div>
+            <p class="text-xs text-gray-400 font-medium mb-0.5">Paso 3 de 3</p>
+            <h3 class="font-bold text-gray-900 text-lg">Gasto compartido</h3>
+          </div>
+          <button @click="paso = 2" class="text-gray-400 hover:text-gray-600 text-sm font-semibold">← Volver</button>
         </div>
-        <div>
-          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Detalle</label>
-          <input type="text" name="detalle" x-model="detalleGasto"
-                 class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-red-400 text-sm">
-        </div>
-        <label class="flex items-center gap-2.5 cursor-pointer select-none">
-          <input type="checkbox" x-model="esCompartido" class="w-4 h-4 accent-red-600 rounded">
-          <span class="text-sm text-gray-700 font-medium">Es compartido</span>
-        </label>
-        <button type="button" @click="abrirPaso2()"
-                class="w-full py-3.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-sm">
-          Registrar gasto
-        </button>
-      </form>
+        <form method="post" action="{% url 'finances-add-movement' %}" class="space-y-4">
+          {% csrf_token %}
+          <input type="hidden" name="tipo" value="Gasto">
+          <input type="hidden" name="nombre" :value="nombreMov">
+          <input type="hidden" name="concepto" :value="conceptoMov">
+          <input type="hidden" name="monto" :value="montoMov">
+          <input type="hidden" name="detalle" :value="detalleMov">
+          <input type="hidden" name="registrar_en_grupo" value="1">
+          <input type="hidden" name="grupo_id" :value="grupoId">
+          <input type="hidden" name="es_compartido" value="1">
+          <input type="hidden" name="usuario_deudor" :value="usuarioDeudor">
+          <div class="bg-gray-50 rounded-2xl p-4 text-center">
+            <p class="text-xs text-gray-500 mb-1">Monto del gasto</p>
+            <p class="text-2xl font-extrabold text-red-600"
+               x-text="montoMov ? new Intl.NumberFormat('es-CL',{style:'currency',currency:'CLP',maximumFractionDigits:0}).format(parseInt(montoMov)) : '$0'">
+            </p>
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Compartir con *</label>
+            <select x-model="usuarioDeudor" required
+                    class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-red-400 text-sm bg-white">
+              <option value="">Selecciona un miembro</option>
+              <template x-for="m in miembrosGrupo" :key="m.id">
+                <option :value="m.id" x-text="m.username"></option>
+              </template>
+            </select>
+          </div>
+          <button type="submit" :disabled="!usuarioDeudor"
+                  class="w-full py-3.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-bold rounded-xl text-sm">
+            Registrar gasto
+          </button>
+        </form>
+      </div>
+
     </div>
   </div>
 
-  <!-- ─── Panel Gasto Compartido (Paso 2) ─── DENTRO del x-data -->
-  <div x-show="panel === 'gasto_paso2'" x-cloak
-       class="fixed inset-0 bg-black/50 z-40 flex items-end justify-center"
-       @click.self="panel = null">
-    <div class="bg-white rounded-t-2xl w-full max-w-md p-6 slide-up">
-      <div class="flex justify-between items-center mb-5">
-        <div>
-          <p class="text-xs text-gray-400 font-medium mb-0.5">Paso 2 de 2</p>
-          <h3 class="font-bold text-gray-900 text-lg">Detalle compartido</h3>
-        </div>
-        <button @click="panel = 'gasto'" class="text-gray-400 hover:text-gray-600 text-sm font-semibold">← Volver</button>
-      </div>
-      <form method="post" action="{% url 'finances-add-movement' %}" class="space-y-4">
-        {% csrf_token %}
-        <input type="hidden" name="tipo" value="Gasto">
-        <input type="hidden" name="nombre" :value="nombreGasto">
-        <input type="hidden" name="concepto" :value="conceptoGasto">
-        <input type="hidden" name="monto" :value="montoGasto">
-        <input type="hidden" name="detalle" :value="detalleGasto">
-        <input type="hidden" name="es_compartido" value="1">
-        <div>
-          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Usuario compartido *</label>
-          <select name="usuario_deudor" required
-                  class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-red-400 text-sm bg-white">
-            <option value="">Selecciona usuario</option>
-            {% for m in otros_miembros %}
-            <option value="{{ m.usuario.id }}">{{ m.usuario.username }}</option>
-            {% endfor %}
-          </select>
-          {% if not otros_miembros %}
-          <p class="text-xs text-yellow-600 mt-1">⚠ No hay otros miembros en el grupo.</p>
-          {% endif %}
-        </div>
-        <label class="flex items-center gap-2.5 cursor-pointer select-none">
-          <input type="checkbox" x-model="compartirMitad" @change="onMitadChange()" class="w-4 h-4 accent-red-600 rounded">
-          <span class="text-sm text-gray-700 font-medium">
-            Compartir la mitad
-            <span class="text-gray-400 font-normal"
-                  x-text="montoGasto ? '(' + new Intl.NumberFormat(\'es-CL\', {style:\'currency\', currency:\'CLP\', maximumFractionDigits:0}).format(Math.floor(parseInt(montoGasto)/2)) + ')' : ''">
-            </span>
-          </span>
-        </label>
-        <div>
-          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Monto a compartir (CLP) *</label>
-          <input type="number" name="monto_compartido" x-model="montoCompartido" min="1" required
-                 class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-red-400 text-sm">
-        </div>
-        <button type="submit"
-                class="w-full py-3.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-sm">
-          Finalizar
-        </button>
-      </form>
-    </div>
-  </div>
-
-  <!-- ─── Panel Añadir Ingreso ─── DENTRO del x-data -->
+  <!-- ═══ PANEL INGRESO ═══ -->
   <div x-show="panel === 'ingreso'" x-cloak
        class="fixed inset-0 bg-black/50 z-40 flex items-end justify-center"
        @click.self="panel = null">
     <div class="bg-white rounded-t-2xl w-full max-w-md p-6 slide-up">
-      <div class="flex justify-between items-center mb-5">
-        <h3 class="font-bold text-gray-900 text-lg">Añadir Ingreso</h3>
-        <button @click="panel = null" class="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
-      </div>
-      <form method="post" action="{% url 'finances-add-movement' %}" class="space-y-4">
-        {% csrf_token %}
-        <input type="hidden" name="tipo" value="Ingreso">
-        <div>
-          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Nombre *</label>
-          <input type="text" name="nombre" required
-                 class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-500 text-sm">
+
+      <!-- Paso 1 Ingreso -->
+      <div x-show="paso === 1">
+        <div class="flex justify-between items-center mb-5">
+          <h3 class="font-bold text-gray-900 text-lg">Añadir Ingreso</h3>
+          <button @click="panel = null" class="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
         </div>
-        <div>
-          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Concepto *</label>
-          <select name="concepto" required
-                  class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-600 text-sm bg-white">
-            <option value="">Selecciona concepto</option>
-            {% for c in conceptos_ingreso %}
-            <option value="{{ c.id }}">{{ c.nombre }}</option>
-            {% endfor %}
-          </select>
-          {% if not conceptos_ingreso %}
-          <p class="text-xs text-yellow-600 mt-1">⚠ Debes crear conceptos de tipo Ingreso primero.</p>
+        <form x-ref="formIngreso" method="post" action="{% url 'finances-add-movement' %}" class="space-y-4">
+          {% csrf_token %}
+          <input type="hidden" name="tipo" value="Ingreso">
+          <input type="hidden" name="registrar_en_grupo" :value="registrarEnGrupo ? '1' : '0'">
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Nombre *</label>
+            <input type="text" name="nombre" x-model="nombreMov" required
+                   class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-500 text-sm">
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Concepto</label>
+            <select name="concepto" @change="conceptoMov = $event.target.value"
+                    class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-600 text-sm bg-white">
+              <option value="">Sin concepto</option>
+              {% for c in conceptos_ingreso %}
+              <option value="{{ c.id }}">{{ c.nombre }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Monto (CLP) *</label>
+            <input type="number" name="monto" x-model="montoMov" min="1" required
+                   class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-500 text-sm">
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Detalle</label>
+            <input type="text" name="detalle" x-model="detalleMov"
+                   class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-500 text-sm">
+          </div>
+          {% if tiene_grupos %}
+          <label class="flex items-center gap-2.5 cursor-pointer select-none">
+            <input type="checkbox" x-model="registrarEnGrupo" class="w-4 h-4 accent-green-700 rounded">
+            <span class="text-sm text-gray-700 font-medium">Registrar en un grupo</span>
+          </label>
           {% endif %}
+          <button type="button" @click="avanzarPaso2Ingreso()"
+                  class="w-full py-3.5 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl text-sm">
+            Registrar ingreso
+          </button>
+        </form>
+      </div>
+
+      <!-- Paso 2 Ingreso -->
+      <div x-show="paso === 2">
+        <div class="flex justify-between items-center mb-5">
+          <div>
+            <p class="text-xs text-gray-400 font-medium mb-0.5">Paso 2 de 2</p>
+            <h3 class="font-bold text-gray-900 text-lg">Registrar en grupo</h3>
+          </div>
+          <button @click="paso = 1" class="text-gray-400 hover:text-gray-600 text-sm font-semibold">← Volver</button>
         </div>
-        <div>
-          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Monto (CLP) *</label>
-          <input type="number" name="monto" min="1" required
-                 class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-500 text-sm">
-        </div>
-        <div>
-          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Detalle</label>
-          <input type="text" name="detalle"
-                 class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-500 text-sm">
-        </div>
-        <button type="submit"
-                class="w-full py-3.5 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl text-sm">
-          Registrar ingreso
-        </button>
-      </form>
+        <form method="post" action="{% url 'finances-add-movement' %}" class="space-y-4">
+          {% csrf_token %}
+          <input type="hidden" name="tipo" value="Ingreso">
+          <input type="hidden" name="nombre" :value="nombreMov">
+          <input type="hidden" name="concepto" :value="conceptoMov">
+          <input type="hidden" name="monto" :value="montoMov">
+          <input type="hidden" name="detalle" :value="detalleMov">
+          <input type="hidden" name="registrar_en_grupo" value="1">
+          <input type="hidden" name="grupo_id" :value="grupoId">
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Grupo *</label>
+            <select x-model="grupoId" required
+                    class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-600 text-sm bg-white">
+              <option value="">Selecciona un grupo</option>
+              {% for g in grupos_usuario %}
+              <option value="{{ g.id }}">{{ g.nombre }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <button type="submit" :disabled="!grupoId"
+                  class="w-full py-3.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-bold rounded-xl text-sm">
+            Registrar ingreso
+          </button>
+        </form>
+      </div>
+
     </div>
   </div>
 
 </div><!-- fin x-data -->
+
+<script>
+  window._miembrosPorGrupo = {{ miembros_por_grupo_json|safe }};
+</script>
 {% endblock %}
 
 {% block extra_scripts %}

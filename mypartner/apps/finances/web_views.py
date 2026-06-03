@@ -1,62 +1,78 @@
 import csv
 import io
+import json
 from datetime import date
 
 from django.contrib import messages
+from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.db.models import Q, Sum
 from django.http import HttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 
-from apps.groups.models import GrupoMiembro
+from apps.groups.models import Grupo, GrupoMiembro
 from apps.notifications.models import Notificacion
 from apps.notifications.services import crear_notificaciones_grupo
-from django.contrib.auth import get_user_model
 
-from .models import Concepto, GastoCompartido, Movimiento, RegistroPresupuesto
+from .models import (
+    Concepto, DivisionPresupuesto, GastoCompartido,
+    Movimiento, RegistroPresupuesto, ReplicaGrupal,
+)
+
+User = get_user_model()
 
 
-def _get_grupo(user):
-    m = GrupoMiembro.objects.filter(usuario=user, grupo__activo=True).select_related('grupo').first()
-    return m.grupo if m else None
+def _get_grupos_usuario(user):
+    return (
+        GrupoMiembro.objects
+        .filter(usuario=user, grupo__activo=True)
+        .select_related('grupo')
+    )
 
 
-def _require_group(request):
-    grupo = _get_grupo(request.user)
-    if not grupo:
-        messages.info(request, 'Para acceder a este módulo necesitas pertenecer a un grupo.')
-        return None, redirect('group-manage')
-    return grupo, None
+def _build_miembros_por_grupo(user):
+    memberships = _get_grupos_usuario(user)
+    result = {}
+    for m in memberships:
+        otros = (
+            GrupoMiembro.objects
+            .filter(grupo=m.grupo)
+            .exclude(usuario=user)
+            .select_related('usuario')
+        )
+        result[str(m.grupo_id)] = [
+            {'id': str(o.usuario_id), 'username': o.usuario.username}
+            for o in otros
+        ]
+    return result
 
 
 @login_required
 def dashboard_view(request):
-    grupo, redir = _require_group(request)
-    if redir:
-        return redir
-
     hoy = date.today()
     mes_inicio = hoy.replace(day=1)
     vista = request.GET.get('vista', 'historico')
     if vista not in ('mensual', 'historico'):
         vista = 'historico'
 
-    movimientos_qs = Movimiento.objects.filter(grupo=grupo)
+    movimientos_qs = Movimiento.objects.filter(usuario=request.user, grupo__isnull=True)
     if vista == 'mensual':
         movimientos_qs = movimientos_qs.filter(
             fecha_hora__date__gte=mes_inicio, fecha_hora__date__lte=hoy
         )
         presupuesto_acum = (
             RegistroPresupuesto.objects
-            .filter(grupo=grupo, tipo='Gasto', fecha__gte=mes_inicio, fecha__lte=hoy)
+            .filter(usuario=request.user, grupo__isnull=True, tipo='Gasto',
+                    fecha__gte=mes_inicio, fecha__lte=hoy)
             .aggregate(t=Sum('monto'))['t'] or 0
         )
     else:
         presupuesto_acum = (
             RegistroPresupuesto.objects
-            .filter(grupo=grupo, tipo='Gasto')
+            .filter(usuario=request.user, grupo__isnull=True, tipo='Gasto')
             .aggregate(t=Sum('monto'))['t'] or 0
         )
 
@@ -88,23 +104,33 @@ def dashboard_view(request):
 
     ultimos = (
         Movimiento.objects
-        .filter(grupo=grupo)
-        .select_related('concepto', 'usuario')
+        .filter(usuario=request.user, grupo__isnull=True)
+        .select_related('concepto')
         .order_by('-fecha_hora')[:5]
     )
-    conceptos_gasto = Concepto.objects.filter(grupo=grupo, tipo='Gasto', activo=True)
-    conceptos_ingreso = Concepto.objects.filter(grupo=grupo, tipo='Ingreso', activo=True)
-    otros_miembros = (
-        GrupoMiembro.objects.filter(grupo=grupo)
-        .exclude(usuario=request.user)
-        .select_related('usuario')
-    )
+
+    conceptos_gasto = Concepto.objects.filter(usuario=request.user, tipo='Gasto', activo=True)
+    conceptos_ingreso = Concepto.objects.filter(usuario=request.user, tipo='Ingreso', activo=True)
+
+    memberships = _get_grupos_usuario(request.user)
+    miembros_por_grupo = _build_miembros_por_grupo(request.user)
+
+    grupos_resumen = []
+    for m in memberships:
+        gasto_mes = (
+            Movimiento.objects
+            .filter(grupo=m.grupo, tipo='Gasto',
+                    fecha_hora__date__gte=mes_inicio, fecha_hora__date__lte=hoy)
+            .aggregate(t=Sum('monto'))['t'] or 0
+        )
+        grupos_resumen.append({'grupo': m.grupo, 'gasto_mes': gasto_mes})
+
+    grupos_ids = list(memberships.values_list('grupo_id', flat=True))
     pendientes_count = GastoCompartido.objects.filter(
-        usuario_deudor=request.user, grupo=grupo, pagado=False
+        usuario_deudor=request.user, grupo_id__in=grupos_ids, pagado=False
     ).count()
 
     return render(request, 'finances/dashboard.html', {
-        'grupo': grupo,
         'gasto_total': gasto_total,
         'ingreso_total': ingreso_total,
         'saldo_restante': saldo_restante,
@@ -114,19 +140,18 @@ def dashboard_view(request):
         'ultimos_movimientos': ultimos,
         'conceptos_gasto': conceptos_gasto,
         'conceptos_ingreso': conceptos_ingreso,
-        'otros_miembros': otros_miembros,
+        'grupos_resumen': grupos_resumen,
+        'miembros_por_grupo_json': json.dumps(miembros_por_grupo),
         'pendientes_count': pendientes_count,
         'hoy': hoy,
         'vista': vista,
+        'tiene_grupos': memberships.exists(),
+        'grupos_usuario': [{'id': str(m.grupo_id), 'nombre': m.grupo.nombre} for m in memberships],
     })
 
 
 @login_required
 def budget_view(request):
-    grupo, redir = _require_group(request)
-    if redir:
-        return redir
-
     if request.method == 'POST':
         action = request.POST.get('action')
 
@@ -147,38 +172,83 @@ def budget_view(request):
                     fecha_fin = date.fromisoformat(fecha_fin_str)
                 except ValueError:
                     pass
+
+            dividir_presupuesto = request.POST.get('dividir_presupuesto') == '1'
+            grupo_division_id = request.POST.get('grupo_division_id', '').strip()
+            divisiones_json_str = request.POST.get('divisiones_json', '[]')
+
             try:
-                concepto = Concepto.objects.get(id=concepto_id, grupo=grupo, activo=True)
+                concepto = Concepto.objects.get(id=concepto_id, usuario=request.user, activo=True)
                 monto = int(monto_str)
-                assert monto > 0
-                registro = RegistroPresupuesto.objects.create(
-                    tipo=tipo, concepto=concepto, nombre=nombre, detalle=detalle,
-                    fecha=fecha_str, monto=monto, grupo=grupo, periodicidad=periodicidad,
-                    fecha_fin=fecha_fin,
-                )
-                crear_notificaciones_grupo(
-                    grupo, Notificacion.TIPO_PRESUPUESTO,
-                    f'Se realizó un cambio en el presupuesto de {concepto.nombre}',
-                    referencia_id=registro.id,
-                    excluir_usuario=request.user,
-                )
+                assert monto > 0 and nombre
+
+                with transaction.atomic():
+                    registro = RegistroPresupuesto.objects.create(
+                        tipo=tipo, concepto=concepto, nombre=nombre, detalle=detalle,
+                        fecha=fecha_str, monto=monto, usuario=request.user, grupo=None,
+                        periodicidad=periodicidad, fecha_fin=fecha_fin,
+                    )
+
+                    if dividir_presupuesto and grupo_division_id:
+                        if not GrupoMiembro.objects.filter(
+                            usuario=request.user, grupo_id=grupo_division_id, grupo__activo=True
+                        ).exists():
+                            raise ValueError('No eres miembro del grupo seleccionado.')
+
+                        grupo_div = Grupo.objects.get(id=grupo_division_id, activo=True)
+                        divisiones_data = json.loads(divisiones_json_str)
+                        otros_total = sum(int(d.get('monto', 0)) for d in divisiones_data)
+                        monto_propietario = monto - otros_total
+
+                        if monto_propietario < 0:
+                            raise ValueError('La suma de montos supera el total del presupuesto.')
+
+                        divisiones_objs = [
+                            DivisionPresupuesto(
+                                registro_presupuesto=registro,
+                                grupo=grupo_div,
+                                usuario=request.user,
+                                monto=monto_propietario,
+                            )
+                        ]
+                        for d in divisiones_data:
+                            user_div = User.objects.get(id=d['usuario_id'])
+                            if not GrupoMiembro.objects.filter(
+                                usuario=user_div, grupo=grupo_div, grupo__activo=True
+                            ).exists():
+                                raise ValueError(f'{user_div.username} no es miembro del grupo.')
+                            divisiones_objs.append(DivisionPresupuesto(
+                                registro_presupuesto=registro,
+                                grupo=grupo_div,
+                                usuario=user_div,
+                                monto=int(d['monto']),
+                            ))
+                        DivisionPresupuesto.objects.bulk_create(divisiones_objs)
+
+                        for d in divisiones_data:
+                            user_div = User.objects.get(id=d['usuario_id'])
+                            Notificacion.objects.create(
+                                titulo=(
+                                    f'{request.user.username} te asignó '
+                                    f'${int(d["monto"]):,} del presupuesto "{registro.nombre}" '
+                                    f'en {grupo_div.nombre}'
+                                ).replace(',', '.'),
+                                tipo=Notificacion.TIPO_PRESUPUESTO,
+                                referencia_id=registro.id,
+                                usuario=user_div,
+                            )
+
                 messages.success(request, 'Registro de presupuesto agregado.')
             except Exception as e:
-                messages.error(request, 'Error al agregar registro. Verifica los datos.')
+                messages.error(request, f'Error al agregar registro: {e}')
 
         elif action == 'modify':
             registro_id = request.POST.get('registro_id')
             monto_str = request.POST.get('monto', '0').replace('.', '').replace(',', '')
             try:
-                registro = RegistroPresupuesto.objects.get(id=registro_id, grupo=grupo)
+                registro = RegistroPresupuesto.objects.get(id=registro_id, usuario=request.user)
                 registro.monto = int(monto_str)
                 registro.save()
-                crear_notificaciones_grupo(
-                    grupo, Notificacion.TIPO_PRESUPUESTO,
-                    f'Se realizó un cambio en el presupuesto de {registro.concepto.nombre}',
-                    referencia_id=registro.id,
-                    excluir_usuario=request.user,
-                )
                 messages.success(request, 'Monto actualizado.')
             except Exception:
                 messages.error(request, 'Error al modificar.')
@@ -186,14 +256,8 @@ def budget_view(request):
         elif action == 'delete':
             registro_id = request.POST.get('registro_id')
             try:
-                registro = RegistroPresupuesto.objects.get(id=registro_id, grupo=grupo)
-                nombre = registro.concepto.nombre
+                registro = RegistroPresupuesto.objects.get(id=registro_id, usuario=request.user)
                 registro.delete()
-                crear_notificaciones_grupo(
-                    grupo, Notificacion.TIPO_PRESUPUESTO,
-                    f'Se realizó un cambio en el presupuesto de {nombre}',
-                    excluir_usuario=request.user,
-                )
                 messages.success(request, 'Registro eliminado.')
             except Exception:
                 messages.error(request, 'Error al eliminar.')
@@ -201,8 +265,8 @@ def budget_view(request):
         return redirect('finances-budget')
 
     hoy = date.today()
-    MESES_ES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
-                'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
+    MESES_ES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+                'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
     mes_filtro = request.GET.get('mes', hoy.strftime('%Y-%m'))
     try:
@@ -217,7 +281,7 @@ def budget_view(request):
     next_offset = mes
     next_mes = f'{anio + next_offset // 12:04d}-{next_offset % 12 + 1:02d}'
 
-    base_qs = RegistroPresupuesto.objects.filter(grupo=grupo).filter(
+    base_qs = RegistroPresupuesto.objects.filter(usuario=request.user, grupo__isnull=True).filter(
         Q(periodicidad='Mensual') |
         Q(periodicidad='Anual', fecha__month=mes) |
         Q(periodicidad='Puntual', fecha__year=anio, fecha__month=mes)
@@ -227,30 +291,30 @@ def budget_view(request):
         Q(fecha_fin__year=anio, fecha_fin__month__gte=mes)
     )
 
-    registros = base_qs.select_related('concepto').order_by('-tipo', '-monto')
+    registros = base_qs.select_related('concepto').prefetch_related('divisiones__usuario').order_by('-tipo', '-monto')
     ingresos = base_qs.filter(tipo='Ingreso').aggregate(t=Sum('monto'))['t'] or 0
-    gastos   = base_qs.filter(tipo='Gasto').aggregate(t=Sum('monto'))['t'] or 0
+    gastos = base_qs.filter(tipo='Gasto').aggregate(t=Sum('monto'))['t'] or 0
     total = ingresos - gastos
-    conceptos_gasto = Concepto.objects.filter(grupo=grupo, tipo='Gasto', activo=True)
-    conceptos_ingreso = Concepto.objects.filter(grupo=grupo, tipo='Ingreso', activo=True)
+
+    conceptos_gasto = Concepto.objects.filter(usuario=request.user, tipo='Gasto', activo=True)
+    conceptos_ingreso = Concepto.objects.filter(usuario=request.user, tipo='Ingreso', activo=True)
+
+    memberships = _get_grupos_usuario(request.user)
+    miembros_por_grupo = _build_miembros_por_grupo(request.user)
 
     return render(request, 'finances/budget.html', {
-        'grupo': grupo, 'registros': registros, 'total': total,
+        'registros': registros, 'total': total,
         'conceptos_gasto': conceptos_gasto, 'conceptos_ingreso': conceptos_ingreso,
-        'mes_filtro': mes_filtro,
-        'mes_nombre': MESES_ES[mes - 1],
-        'mes_anio': anio,
-        'prev_mes': prev_mes,
-        'next_mes': next_mes,
+        'mes_filtro': mes_filtro, 'mes_nombre': MESES_ES[mes - 1], 'mes_anio': anio,
+        'prev_mes': prev_mes, 'next_mes': next_mes,
+        'grupos_usuario': [{'id': str(m.grupo_id), 'nombre': m.grupo.nombre} for m in memberships],
+        'miembros_por_grupo_json': json.dumps(miembros_por_grupo),
+        'tiene_grupos': memberships.exists(),
     })
 
 
 @login_required
 def concepts_view(request):
-    grupo, redir = _require_group(request)
-    if redir:
-        return redir
-
     if request.method == 'POST':
         action = request.POST.get('action')
 
@@ -258,10 +322,10 @@ def concepts_view(request):
             nombre = request.POST.get('nombre', '').strip()
             tipo = request.POST.get('tipo')
             if nombre and tipo in ('Gasto', 'Ingreso'):
-                if Concepto.objects.filter(grupo=grupo, nombre__iexact=nombre, activo=True).exists():
-                    messages.error(request, f'Ya existe un concepto llamado "{nombre}" en este grupo.')
+                if Concepto.objects.filter(usuario=request.user, nombre__iexact=nombre, activo=True).exists():
+                    messages.error(request, f'Ya existe un concepto llamado "{nombre}".')
                 else:
-                    Concepto.objects.create(nombre=nombre, tipo=tipo, grupo=grupo)
+                    Concepto.objects.create(nombre=nombre, tipo=tipo, usuario=request.user, grupo=None)
                     messages.success(request, 'Concepto agregado.')
             else:
                 messages.error(request, 'Nombre y tipo son obligatorios.')
@@ -270,9 +334,9 @@ def concepts_view(request):
             concepto_id = request.POST.get('concepto_id')
             nombre = request.POST.get('nombre', '').strip()
             try:
-                c = Concepto.objects.get(id=concepto_id, grupo=grupo, activo=True)
-                if Concepto.objects.filter(grupo=grupo, nombre__iexact=nombre, activo=True).exclude(id=concepto_id).exists():
-                    messages.error(request, f'Ya existe un concepto llamado "{nombre}" en este grupo.')
+                c = Concepto.objects.get(id=concepto_id, usuario=request.user, activo=True)
+                if Concepto.objects.filter(usuario=request.user, nombre__iexact=nombre, activo=True).exclude(id=concepto_id).exists():
+                    messages.error(request, f'Ya existe un concepto llamado "{nombre}".')
                     return redirect('finances-concepts')
                 c.nombre = nombre
                 c.save()
@@ -284,7 +348,7 @@ def concepts_view(request):
             concepto_id = request.POST.get('concepto_id')
             opcion = request.POST.get('opcion', '')
             try:
-                c = Concepto.objects.get(id=concepto_id, grupo=grupo, activo=True)
+                c = Concepto.objects.get(id=concepto_id, usuario=request.user, activo=True)
                 if opcion == 'eliminar_movimientos':
                     Movimiento.objects.filter(concepto=c).delete()
                     c.activo = False
@@ -299,8 +363,7 @@ def concepts_view(request):
                     has_mov = Movimiento.objects.filter(concepto=c).exists()
                     if has_mov:
                         return render(request, 'finances/concepts.html', {
-                            'grupo': grupo,
-                            'conceptos': Concepto.objects.filter(grupo=grupo, activo=True),
+                            'conceptos': Concepto.objects.filter(usuario=request.user, activo=True),
                             'concepto_conflicto': c,
                         })
                     c.activo = False
@@ -311,20 +374,16 @@ def concepts_view(request):
 
         return redirect('finances-concepts')
 
-    conceptos = Concepto.objects.filter(grupo=grupo, activo=True).order_by('tipo', 'nombre')
-    return render(request, 'finances/concepts.html', {'grupo': grupo, 'conceptos': conceptos})
+    conceptos = Concepto.objects.filter(usuario=request.user, activo=True).order_by('tipo', 'nombre')
+    return render(request, 'finances/concepts.html', {'conceptos': conceptos})
 
 
 @login_required
 def movements_view(request):
-    grupo, redir = _require_group(request)
-    if redir:
-        return redir
-
     qs = (
         Movimiento.objects
-        .filter(grupo=grupo)
-        .select_related('concepto', 'usuario')
+        .filter(usuario=request.user, grupo__isnull=True)
+        .select_related('concepto')
         .order_by('-fecha_hora')
     )
     concepto_id = request.GET.get('concepto', '')
@@ -333,41 +392,40 @@ def movements_view(request):
 
     paginator = Paginator(qs, 15)
     page = paginator.get_page(request.GET.get('page', 1))
-    conceptos = Concepto.objects.filter(grupo=grupo, activo=True).order_by('nombre')
+    conceptos = Concepto.objects.filter(usuario=request.user, activo=True).order_by('nombre')
 
     return render(request, 'finances/movements.html', {
-        'grupo': grupo, 'page': page, 'conceptos': conceptos,
-        'concepto_filtro': concepto_id,
+        'page': page, 'conceptos': conceptos, 'concepto_filtro': concepto_id,
     })
 
 
 @login_required
 def movement_detail_view(request, movement_id):
-    grupo, redir = _require_group(request)
-    if redir:
-        return redir
-    mov = get_object_or_404(Movimiento, id=movement_id, grupo=grupo)
-    return render(request, 'finances/movement_detail.html', {'grupo': grupo, 'movimiento': mov})
+    mov = get_object_or_404(
+        Movimiento.objects.select_related('concepto', 'usuario'),
+        id=movement_id, usuario=request.user, grupo__isnull=True,
+    )
+    replicas = ReplicaGrupal.objects.filter(movimiento_personal=mov).select_related('grupo')
+    return render(request, 'finances/movement_detail.html', {
+        'movimiento': mov, 'replicas': replicas,
+    })
 
 
 @login_required
 def export_csv_view(request):
-    grupo, redir = _require_group(request)
-    if redir:
-        return redir
-
     movimientos = (
-        Movimiento.objects.filter(grupo=grupo)
-        .select_related('concepto', 'usuario')
+        Movimiento.objects
+        .filter(usuario=request.user, grupo__isnull=True)
+        .select_related('concepto')
         .order_by('-fecha_hora')
     )
     output = io.StringIO()
     writer = csv.writer(output, delimiter=';')
-    writer.writerow(['Tipo', 'Concepto', 'Nombre', 'Detalle', 'Monto', 'Usuario', 'Fecha y hora'])
+    writer.writerow(['Tipo', 'Concepto', 'Nombre', 'Detalle', 'Monto', 'Fecha y hora'])
     for m in movimientos:
         c_nombre = m.concepto.nombre if m.concepto and m.concepto.activo else 'Desconocido'
         writer.writerow([m.tipo, c_nombre, m.nombre, m.detalle, m.monto,
-                         m.usuario.username, m.fecha_hora.strftime('%d/%m/%Y %H:%M')])
+                         m.fecha_hora.strftime('%d/%m/%Y %H:%M')])
     content = '﻿' + output.getvalue()
     response = HttpResponse(content, content_type='text/csv; charset=utf-8')
     response['Content-Disposition'] = 'attachment; filename="movimientos.csv"'
@@ -376,78 +434,111 @@ def export_csv_view(request):
 
 @login_required
 def add_movement_view(request):
-    grupo, redir = _require_group(request)
-    if redir:
-        return redir
-
     if request.method == 'POST':
         tipo = request.POST.get('tipo')
         nombre = request.POST.get('nombre', '').strip()
         detalle = request.POST.get('detalle', '').strip()
-        concepto_id = request.POST.get('concepto')
+        concepto_id = request.POST.get('concepto', '').strip()
         monto_str = request.POST.get('monto', '0').replace('.', '').replace(',', '')
+        registrar_en_grupo = request.POST.get('registrar_en_grupo') == '1'
+        grupo_id = request.POST.get('grupo_id', '').strip()
         es_compartido = request.POST.get('es_compartido') == '1'
+        usuario_deudor_id = request.POST.get('usuario_deudor', '').strip()
+
         try:
-            concepto = Concepto.objects.get(id=concepto_id, grupo=grupo, activo=True)
             monto = int(monto_str)
             assert monto > 0 and nombre
-            mov = Movimiento.objects.create(
-                tipo=tipo, nombre=nombre, detalle=detalle,
-                monto=monto, concepto=concepto, usuario=request.user,
-                grupo=grupo, fecha_hora=timezone.now(),
-            )
-            tipo_notif = Notificacion.TIPO_GASTO if tipo == 'Gasto' else Notificacion.TIPO_INGRESO
-            titulo = f'Se {"generó un gasto" if tipo == "Gasto" else "registró un ingreso"} por ${monto:,} de {request.user.username} por {concepto.nombre}'.replace(',', '.')
-            crear_notificaciones_grupo(grupo, tipo_notif, titulo, referencia_id=mov.id, excluir_usuario=request.user)
 
-            if es_compartido and tipo == 'Gasto':
-                usuario_deudor_id = request.POST.get('usuario_deudor', '')
-                monto_comp_str = request.POST.get('monto_compartido', '0').replace('.', '').replace(',', '')
+            concepto = None
+            if concepto_id:
                 try:
-                    miembro = GrupoMiembro.objects.select_related('usuario').get(
-                        usuario_id=usuario_deudor_id, grupo=grupo
-                    )
-                    monto_compartido = int(monto_comp_str)
-                    assert monto_compartido > 0
-                    GastoCompartido.objects.create(
-                        movimiento=mov,
-                        usuario_acreedor=request.user,
-                        usuario_deudor=miembro.usuario,
-                        monto_pendiente=monto_compartido,
-                        grupo=grupo,
-                    )
-                    Notificacion.objects.create(
-                        titulo=f'{request.user.username} te compartió un gasto de ${monto_compartido:,} por {concepto.nombre}. Pendiente de pago.'.replace(',', '.'),
-                        tipo=Notificacion.TIPO_GASTO_COMPARTIDO,
-                        referencia_id=mov.id,
-                        usuario=miembro.usuario,
-                    )
-                except Exception:
+                    concepto = Concepto.objects.get(id=concepto_id, usuario=request.user, activo=True)
+                except Concepto.DoesNotExist:
                     pass
 
+            with transaction.atomic():
+                mov_personal = Movimiento.objects.create(
+                    tipo=tipo, nombre=nombre, detalle=detalle,
+                    monto=monto, concepto=concepto, usuario=request.user,
+                    grupo=None, fecha_hora=timezone.now(),
+                )
+
+                if registrar_en_grupo and grupo_id:
+                    if not GrupoMiembro.objects.filter(
+                        usuario=request.user, grupo_id=grupo_id, grupo__activo=True
+                    ).exists():
+                        raise ValueError('No eres miembro del grupo seleccionado.')
+
+                    grupo = Grupo.objects.get(id=grupo_id, activo=True)
+
+                    concepto_grupal = None
+                    if concepto:
+                        concepto_grupal = Concepto.objects.filter(
+                            grupo=grupo, nombre=concepto.nombre, tipo=concepto.tipo, activo=True
+                        ).first()
+
+                    mov_grupo = Movimiento.objects.create(
+                        tipo=tipo, nombre=nombre, detalle=detalle,
+                        monto=monto, concepto=concepto_grupal, usuario=request.user,
+                        grupo=grupo, fecha_hora=mov_personal.fecha_hora,
+                    )
+                    ReplicaGrupal.objects.create(
+                        movimiento_personal=mov_personal,
+                        movimiento_grupo=mov_grupo,
+                        grupo=grupo,
+                    )
+
+                    tipo_notif = Notificacion.TIPO_GASTO if tipo == 'Gasto' else Notificacion.TIPO_INGRESO
+                    concepto_nombre = concepto_grupal.nombre if concepto_grupal else (concepto.nombre if concepto else 'sin concepto')
+                    titulo = (
+                        f'Se {"generó un gasto" if tipo == "Gasto" else "registró un ingreso"} '
+                        f'por ${monto:,} de {request.user.username} por {concepto_nombre}'
+                    ).replace(',', '.')
+                    crear_notificaciones_grupo(grupo, tipo_notif, titulo, referencia_id=mov_grupo.id, excluir_usuario=request.user)
+
+                    if es_compartido and tipo == 'Gasto' and usuario_deudor_id:
+                        miembro = GrupoMiembro.objects.select_related('usuario').get(
+                            usuario_id=usuario_deudor_id, grupo=grupo
+                        )
+                        gc = GastoCompartido.objects.create(
+                            movimiento=mov_grupo,
+                            usuario_acreedor=request.user,
+                            usuario_deudor=miembro.usuario,
+                            monto_pendiente=monto,
+                            grupo=grupo,
+                        )
+                        Notificacion.objects.create(
+                            titulo=f'{request.user.username} te compartió un gasto de ${monto:,} por {concepto_nombre}.'.replace(',', '.'),
+                            tipo=Notificacion.TIPO_GASTO_COMPARTIDO,
+                            referencia_id=mov_grupo.id,
+                            usuario=miembro.usuario,
+                        )
+
             messages.success(request, f'{tipo} registrado exitosamente.')
-        except Exception:
-            messages.error(request, 'Error al registrar. Verifica los datos.')
+        except GrupoMiembro.DoesNotExist:
+            messages.error(request, 'El usuario seleccionado no pertenece al grupo.')
+        except Exception as e:
+            messages.error(request, f'Error al registrar: {e}')
 
     return redirect('finances-dashboard')
 
 
 @login_required
 def gastos_compartidos_view(request):
-    grupo, redir = _require_group(request)
-    if redir:
-        return redir
+    grupos_ids = _get_grupos_usuario(request.user).values_list('grupo_id', flat=True)
 
     if request.method == 'POST':
         gasto_id = request.POST.get('gasto_id')
         try:
             gasto = GastoCompartido.objects.get(
-                id=gasto_id, usuario_acreedor=request.user, grupo=grupo, pagado=False
+                id=gasto_id, usuario_acreedor=request.user,
+                grupo_id__in=grupos_ids, pagado=False
             )
             gasto.pagado = True
             gasto.save()
+            concepto_nombre = gasto.movimiento.concepto.nombre if gasto.movimiento.concepto else 'sin concepto'
             Notificacion.objects.create(
-                titulo=f'{request.user.username} marcó como pagado el gasto compartido de ${gasto.monto_pendiente:,} por {gasto.movimiento.concepto.nombre if gasto.movimiento.concepto else "sin concepto"}.'.replace(',', '.'),
+                titulo=f'{request.user.username} marcó como pagado el gasto compartido de ${gasto.monto_pendiente:,} por {concepto_nombre}.'.replace(',', '.'),
                 tipo=Notificacion.TIPO_GASTO_COMPARTIDO,
                 referencia_id=gasto.movimiento_id,
                 usuario=gasto.usuario_deudor,
@@ -459,23 +550,60 @@ def gastos_compartidos_view(request):
 
     pendientes_pago = (
         GastoCompartido.objects
-        .filter(usuario_deudor=request.user, grupo=grupo, pagado=False)
-        .select_related('movimiento__concepto', 'usuario_acreedor')
+        .filter(usuario_deudor=request.user, grupo_id__in=grupos_ids, pagado=False)
+        .select_related('movimiento__concepto', 'usuario_acreedor', 'grupo')
         .order_by('-created_at')
     )
     pendientes_cobro = (
         GastoCompartido.objects
-        .filter(usuario_acreedor=request.user, grupo=grupo, pagado=False)
-        .select_related('movimiento__concepto', 'usuario_deudor')
+        .filter(usuario_acreedor=request.user, grupo_id__in=grupos_ids, pagado=False)
+        .select_related('movimiento__concepto', 'usuario_deudor', 'grupo')
         .order_by('-created_at')
     )
     total_debo = pendientes_pago.aggregate(t=Sum('monto_pendiente'))['t'] or 0
     total_me_deben = pendientes_cobro.aggregate(t=Sum('monto_pendiente'))['t'] or 0
 
     return render(request, 'finances/shared_expenses.html', {
-        'grupo': grupo,
         'pendientes_pago': pendientes_pago,
         'pendientes_cobro': pendientes_cobro,
         'total_debo': total_debo,
         'total_me_deben': total_me_deben,
+    })
+
+
+@login_required
+def group_finances_view(request, group_id):
+    grupo = get_object_or_404(Grupo, id=group_id, activo=True)
+    if not GrupoMiembro.objects.filter(usuario=request.user, grupo=grupo).exists():
+        messages.error(request, 'No tienes acceso a este grupo.')
+        return redirect('finances-dashboard')
+
+    hoy = date.today()
+    mes_inicio = hoy.replace(day=1)
+
+    movimientos_qs = Movimiento.objects.filter(grupo=grupo)
+    movimientos_mes = movimientos_qs.filter(
+        fecha_hora__date__gte=mes_inicio, fecha_hora__date__lte=hoy,
+    )
+
+    gasto_total = movimientos_qs.filter(tipo='Gasto').aggregate(t=Sum('monto'))['t'] or 0
+    ingreso_total = movimientos_qs.filter(tipo='Ingreso').aggregate(t=Sum('monto'))['t'] or 0
+    gasto_mes = movimientos_mes.filter(tipo='Gasto').aggregate(t=Sum('monto'))['t'] or 0
+    ingreso_mes = movimientos_mes.filter(tipo='Ingreso').aggregate(t=Sum('monto'))['t'] or 0
+    saldo_mes = ingreso_mes - gasto_mes
+
+    ultimos = (
+        movimientos_qs
+        .select_related('concepto', 'usuario')
+        .order_by('-fecha_hora')[:10]
+    )
+
+    return render(request, 'finances/group_finances.html', {
+        'grupo': grupo,
+        'gasto_total': gasto_total,
+        'ingreso_total': ingreso_total,
+        'gasto_mes': gasto_mes,
+        'ingreso_mes': ingreso_mes,
+        'saldo_mes': saldo_mes,
+        'ultimos_movimientos': ultimos,
     })

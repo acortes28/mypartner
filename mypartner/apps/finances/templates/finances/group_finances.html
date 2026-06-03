@@ -1,0 +1,94 @@
+{% extends 'base.html' %}
+{% load finance_filters %}
+{% block title %}{{ grupo.nombre }} — MyPartner{% endblock %}
+
+{% block content %}
+<div class="pb-6">
+
+  <!-- Header -->
+  <div class="bg-green-800 text-white px-4 pt-2 pb-6">
+    <div class="flex items-center gap-3 mb-3">
+      <a href="{% url 'finances-dashboard' %}" class="p-1.5 rounded-lg hover:bg-green-700 transition-colors">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+      </a>
+      <div>
+        <p class="text-green-300 text-xs font-semibold uppercase tracking-wide">Grupo</p>
+        <h1 class="text-xl font-extrabold">{{ grupo.nombre }}</h1>
+      </div>
+    </div>
+
+    <!-- KPIs del grupo -->
+    <div class="space-y-3">
+      <div class="grid grid-cols-2 gap-3">
+        <div class="bg-green-700/50 rounded-2xl p-4 backdrop-blur-sm">
+          <p class="text-green-300 text-xs font-semibold mb-1">Gasto mes</p>
+          <p class="text-xl font-extrabold text-red-200">{{ gasto_mes|clp }}</p>
+        </div>
+        <div class="bg-green-700/50 rounded-2xl p-4 backdrop-blur-sm">
+          <p class="text-green-300 text-xs font-semibold mb-1">Ingreso mes</p>
+          <p class="text-xl font-extrabold">{{ ingreso_mes|clp }}</p>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div class="bg-green-700/50 rounded-2xl p-4 backdrop-blur-sm">
+          <p class="text-green-300 text-xs font-semibold mb-1">Saldo mes</p>
+          <p class="text-xl font-extrabold {% if saldo_mes < 0 %}text-red-300{% endif %}">{{ saldo_mes|clp }}</p>
+        </div>
+        <div class="bg-green-700/50 rounded-2xl p-4 backdrop-blur-sm">
+          <p class="text-green-300 text-xs font-semibold mb-1">Gasto histórico</p>
+          <p class="text-xl font-extrabold text-red-200">{{ gasto_total|clp }}</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="px-4 pt-4 space-y-4">
+
+    <!-- Info -->
+    <div class="bg-blue-50 border border-blue-100 rounded-2xl px-4 py-3">
+      <p class="text-xs text-blue-700 leading-relaxed">
+        Los movimientos de este grupo son réplicas de finanzas personales de los miembros.
+        Para agregar un movimiento, regístralo en tus finanzas personales y selecciona este grupo.
+      </p>
+    </div>
+
+    <!-- Últimos movimientos del grupo -->
+    <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+      <div class="flex items-center justify-between px-5 py-3 bg-gray-50 border-b border-gray-100">
+        <p class="text-xs font-bold text-gray-500 uppercase tracking-wide">Últimos movimientos</p>
+      </div>
+      {% if ultimos_movimientos %}
+        {% for m in ultimos_movimientos %}
+        <div class="flex items-center gap-3 px-5 py-3.5 border-b border-gray-50 last:border-0">
+          <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0
+            {% if m.tipo == 'Gasto' %}bg-red-100 text-red-600{% else %}bg-green-100 text-green-600{% endif %}">
+            {% if m.tipo == 'Gasto' %}↑{% else %}↓{% endif %}
+          </div>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-semibold text-gray-900 truncate">{{ m.nombre }}</p>
+            <p class="text-xs text-gray-400">
+              {{ m.concepto.nombre|default:"Sin concepto" }} · @{{ m.usuario.username }}
+            </p>
+            <p class="text-xs text-gray-400">{{ m.fecha_hora|date:"d/m/Y H:i" }}</p>
+          </div>
+          <p class="text-sm font-bold flex-shrink-0 {% if m.tipo == 'Gasto' %}text-red-600{% else %}text-green-600{% endif %}">
+            {% if m.tipo == 'Gasto' %}-{% else %}+{% endif %}{{ m.monto|clp }}
+          </p>
+        </div>
+        {% endfor %}
+      {% else %}
+        <p class="text-center py-8 text-gray-400 text-sm">Sin movimientos en este grupo</p>
+      {% endif %}
+    </div>
+
+    <!-- Acciones -->
+    <a href="{% url 'finances-dashboard' %}"
+       class="block w-full py-3.5 bg-green-700 hover:bg-green-800 text-white font-bold rounded-2xl text-sm text-center transition-colors">
+      Ir a mis finanzas personales
+    </a>
+
+  </div>
+</div>
+{% endblock %}

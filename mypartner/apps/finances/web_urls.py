@@ -10,4 +10,5 @@ urlpatterns = [
     path('finances/export/', web_views.export_csv_view, name='finances-export'),
     path('finances/add-movement/', web_views.add_movement_view, name='finances-add-movement'),
     path('finances/shared/', web_views.gastos_compartidos_view, name='finances-shared'),
+    path('finances/groups/<uuid:group_id>/', web_views.group_finances_view, name='finances-group'),
 ]

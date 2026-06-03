@@ -11,8 +11,19 @@ class Concepto(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     nombre = models.CharField(max_length=100)
     tipo = models.CharField(max_length=10, choices=TIPO_CHOICES)
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='conceptos',
+        null=True,
+        blank=True,
+    )
     grupo = models.ForeignKey(
-        'groups.Grupo', on_delete=models.CASCADE, related_name='conceptos'
+        'groups.Grupo',
+        on_delete=models.CASCADE,
+        related_name='conceptos',
+        null=True,
+        blank=True,
     )
     activo = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -20,11 +31,26 @@ class Concepto(models.Model):
     class Meta:
         db_table = 'conceptos'
         constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(usuario__isnull=False, grupo__isnull=True) |
+                    models.Q(usuario__isnull=True, grupo__isnull=False)
+                ),
+                name='concepto_contexto_exclusivo',
+            ),
+            models.UniqueConstraint(
+                fields=['nombre', 'usuario'],
+                condition=models.Q(activo=True, grupo__isnull=True),
+                name='concepto_nombre_usuario_personal_unique',
+            ),
             models.UniqueConstraint(
                 fields=['nombre', 'grupo'],
-                condition=models.Q(activo=True),
-                name='conceptos_nombre_grupo_activo_unique',
-            )
+                condition=models.Q(activo=True, usuario__isnull=True),
+                name='concepto_nombre_grupo_unique',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['usuario', 'tipo'], name='idx_concepto_usuario_tipo'),
         ]
 
     def __str__(self):
@@ -54,7 +80,11 @@ class Movimiento(models.Model):
         related_name='movimientos',
     )
     grupo = models.ForeignKey(
-        'groups.Grupo', on_delete=models.CASCADE, related_name='movimientos'
+        'groups.Grupo',
+        on_delete=models.CASCADE,
+        related_name='movimientos',
+        null=True,
+        blank=True,
     )
     fecha_hora = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
@@ -62,8 +92,10 @@ class Movimiento(models.Model):
     class Meta:
         db_table = 'movimientos'
         indexes = [
-            models.Index(fields=['grupo', '-fecha_hora']),
-            models.Index(fields=['grupo', 'tipo']),
+            models.Index(fields=['usuario', '-fecha_hora'], name='idx_mov_usuario_fecha'),
+            models.Index(fields=['grupo', '-fecha_hora'], name='idx_mov_grupo_fecha'),
+            models.Index(fields=['usuario', 'tipo'], name='idx_mov_usuario_tipo'),
+            models.Index(fields=['grupo', 'tipo'], name='idx_mov_grupo_tipo'),
         ]
 
     def __str__(self):
@@ -97,14 +129,34 @@ class RegistroPresupuesto(models.Model):
     detalle = models.TextField(blank=True, default='')
     monto = models.PositiveIntegerField()
     fecha = models.DateField()
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='presupuestos',
+        null=True,
+        blank=True,
+    )
     grupo = models.ForeignKey(
-        'groups.Grupo', on_delete=models.CASCADE, related_name='presupuestos'
+        'groups.Grupo',
+        on_delete=models.CASCADE,
+        related_name='presupuestos',
+        null=True,
+        blank=True,
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = 'presupuesto'
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(usuario__isnull=False, grupo__isnull=True) |
+                    models.Q(usuario__isnull=True, grupo__isnull=False)
+                ),
+                name='presupuesto_contexto_exclusivo',
+            ),
+        ]
 
     def __str__(self):
         return f"Presupuesto {self.nombre} - ${self.monto:,}"
@@ -133,3 +185,67 @@ class GastoCompartido(models.Model):
 
     def __str__(self):
         return f"{self.usuario_acreedor} → {self.usuario_deudor}: ${self.monto_pendiente:,}"
+
+
+class ReplicaGrupal(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    movimiento_personal = models.ForeignKey(
+        Movimiento,
+        on_delete=models.CASCADE,
+        related_name='replicas',
+    )
+    movimiento_grupo = models.ForeignKey(
+        Movimiento,
+        on_delete=models.CASCADE,
+        related_name='origen_replica',
+    )
+    grupo = models.ForeignKey(
+        'groups.Grupo',
+        on_delete=models.CASCADE,
+        related_name='replicas',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'replicas_grupales'
+        unique_together = ('movimiento_personal', 'grupo')
+
+    def __str__(self):
+        return f"Réplica de {self.movimiento_personal_id} en {self.grupo.nombre}"
+
+
+class DivisionPresupuesto(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    registro_presupuesto = models.ForeignKey(
+        RegistroPresupuesto,
+        on_delete=models.CASCADE,
+        related_name='divisiones',
+    )
+    grupo = models.ForeignKey(
+        'groups.Grupo',
+        on_delete=models.CASCADE,
+        related_name='divisiones_presupuesto',
+    )
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='divisiones_presupuesto',
+    )
+    monto = models.PositiveIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'divisiones_presupuesto'
+        unique_together = ('registro_presupuesto', 'usuario')
+        indexes = [
+            models.Index(fields=['registro_presupuesto'], name='idx_division_presupuesto'),
+            models.Index(fields=['usuario', 'grupo'], name='idx_division_usuario_grupo'),
+        ]
+
+    def __str__(self):
+        return f"{self.usuario.username}: ${self.monto:,} de {self.registro_presupuesto.nombre}"
+
+    @property
+    def porcentaje(self):
+        total = self.registro_presupuesto.monto
+        return round(self.monto / total * 100, 2) if total else 0
