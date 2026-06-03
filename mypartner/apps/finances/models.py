@@ -1,6 +1,7 @@
 import uuid
 from django.conf import settings
 from django.db import models
+from django.db.models import Sum
 
 
 class Concepto(models.Model):
@@ -249,3 +250,85 @@ class DivisionPresupuesto(models.Model):
     def porcentaje(self):
         total = self.registro_presupuesto.monto
         return round(self.monto / total * 100, 2) if total else 0
+
+
+class MetaAhorro(models.Model):
+    TIPO_PERSONAL = 'personal'
+    TIPO_GRUPAL = 'grupal'
+    TIPO_CHOICES = [(TIPO_PERSONAL, 'Personal'), (TIPO_GRUPAL, 'Grupal')]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    nombre = models.CharField(max_length=255)
+    monto_objetivo = models.PositiveIntegerField()
+    fecha_limite = models.DateField(null=True, blank=True)
+    tipo = models.CharField(max_length=10, choices=TIPO_CHOICES)
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='metas_ahorro',
+        null=True, blank=True,
+    )
+    grupo = models.ForeignKey(
+        'groups.Grupo',
+        on_delete=models.CASCADE,
+        related_name='metas_ahorro',
+        null=True, blank=True,
+    )
+    activa = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'metas_ahorro'
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(usuario__isnull=False, grupo__isnull=True) |
+                    models.Q(usuario__isnull=True, grupo__isnull=False)
+                ),
+                name='meta_ahorro_contexto_exclusivo',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.nombre} (${self.monto_objetivo:,})"
+
+    def monto_ahorrado(self):
+        return self.aportes.aggregate(t=Sum('monto'))['t'] or 0
+
+    def porcentaje_completado(self):
+        if not self.monto_objetivo:
+            return 0
+        return min(100, round((self.monto_ahorrado() / self.monto_objetivo) * 100))
+
+    def completada(self):
+        return self.monto_ahorrado() >= self.monto_objetivo
+
+
+class AporteAhorro(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    meta = models.ForeignKey(
+        MetaAhorro, on_delete=models.CASCADE, related_name='aportes'
+    )
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='aportes_ahorro',
+    )
+    movimiento = models.ForeignKey(
+        'Movimiento',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='aportes_ahorro',
+    )
+    monto = models.IntegerField()
+    fecha = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'aportes_ahorro'
+        indexes = [
+            models.Index(fields=['meta', '-fecha'], name='idx_aporte_meta_fecha'),
+        ]
+
+    def __str__(self):
+        return f"{self.usuario.username}: ${self.monto:,} → {self.meta.nombre}"

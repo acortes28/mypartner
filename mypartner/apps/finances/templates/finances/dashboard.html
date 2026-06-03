@@ -10,6 +10,7 @@
 {% block content %}
 <div x-data="{
   panel: new URLSearchParams(window.location.search).get('panel'),
+  sideMenu: false,
   nombreMov: '',
   conceptoMov: '',
   montoMov: '',
@@ -77,19 +78,17 @@
         <p class="text-green-300 text-xs font-semibold uppercase tracking-wide">Personal</p>
         <h1 class="text-xl font-extrabold">Mis Finanzas</h1>
       </div>
-      <div class="flex gap-2">
-        <a href="{% url 'finances-budget' %}"
-           class="px-3 py-1.5 bg-green-700 hover:bg-green-600 rounded-lg text-xs font-semibold transition-colors">
-          Presupuesto
-        </a>
-        <a href="{% url 'finances-concepts' %}"
-           class="px-3 py-1.5 bg-green-700 hover:bg-green-600 rounded-lg text-xs font-semibold transition-colors">
-          Conceptos
-        </a>
+      <div class="flex items-center gap-2">
         <a href="{% url 'finances-export' %}"
            class="px-3 py-1.5 bg-green-600 hover:bg-green-500 rounded-lg text-xs font-semibold transition-colors">
           Exportar
         </a>
+        <button @click="sideMenu = true"
+                class="p-2 rounded-lg bg-green-700 hover:bg-green-600 transition-colors">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 6h16M4 12h16M4 18h16"/>
+          </svg>
+        </button>
       </div>
     </div>
 
@@ -423,6 +422,82 @@
         </button>
       </form>
     </div>
+  </div>
+
+  <!-- ═══ PANEL LATERAL ═══ -->
+  <!-- Backdrop -->
+  <div x-show="sideMenu" x-cloak
+       class="fixed inset-0 bg-black/50 z-40"
+       x-transition:enter="transition ease-out duration-200"
+       x-transition:enter-start="opacity-0"
+       x-transition:enter-end="opacity-100"
+       x-transition:leave="transition ease-in duration-150"
+       x-transition:leave-start="opacity-100"
+       x-transition:leave-end="opacity-0"
+       @click="sideMenu = false">
+  </div>
+  <!-- Drawer -->
+  <div x-show="sideMenu" x-cloak
+       class="fixed top-0 right-0 h-full w-72 bg-white z-50 shadow-2xl flex flex-col"
+       x-transition:enter="transition ease-out duration-250"
+       x-transition:enter-start="translate-x-full"
+       x-transition:enter-end="translate-x-0"
+       x-transition:leave="transition ease-in duration-200"
+       x-transition:leave-start="translate-x-0"
+       x-transition:leave-end="translate-x-full">
+
+    <!-- Cabecera del drawer -->
+    <div class="bg-green-800 text-white px-5 py-4 flex items-center justify-between flex-shrink-0">
+      <div>
+        <p class="text-green-300 text-xs font-semibold uppercase tracking-wide">Personal</p>
+        <p class="font-extrabold">Mis Finanzas</p>
+      </div>
+      <button @click="sideMenu = false" class="p-1.5 rounded-lg hover:bg-green-700 transition-colors">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Ítems de navegación -->
+    <nav class="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+      <a href="{% url 'finances-savings-personal' %}"
+         class="flex items-center gap-3 px-4 py-3.5 rounded-xl hover:bg-green-50 transition-colors group">
+        <div class="w-9 h-9 bg-green-100 rounded-xl flex items-center justify-center text-lg group-hover:scale-110 transition-transform">🐷</div>
+        <div>
+          <p class="text-sm font-bold text-gray-900">Ahorros</p>
+          <p class="text-xs text-gray-400">Metas y progreso</p>
+        </div>
+        <svg class="w-4 h-4 text-gray-300 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+      </a>
+
+      <a href="{% url 'finances-budget' %}"
+         class="flex items-center gap-3 px-4 py-3.5 rounded-xl hover:bg-blue-50 transition-colors group">
+        <div class="w-9 h-9 bg-blue-100 rounded-xl flex items-center justify-center text-lg group-hover:scale-110 transition-transform">📊</div>
+        <div>
+          <p class="text-sm font-bold text-gray-900">Presupuesto</p>
+          <p class="text-xs text-gray-400">Planifica tus gastos</p>
+        </div>
+        <svg class="w-4 h-4 text-gray-300 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+      </a>
+
+      <a href="{% url 'finances-concepts' %}"
+         class="flex items-center gap-3 px-4 py-3.5 rounded-xl hover:bg-purple-50 transition-colors group">
+        <div class="w-9 h-9 bg-purple-100 rounded-xl flex items-center justify-center text-lg group-hover:scale-110 transition-transform">🏷️</div>
+        <div>
+          <p class="text-sm font-bold text-gray-900">Conceptos</p>
+          <p class="text-xs text-gray-400">Categorías de movimientos</p>
+        </div>
+        <svg class="w-4 h-4 text-gray-300 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+      </a>
+    </nav>
+
   </div>
 
 </div><!-- fin x-data -->

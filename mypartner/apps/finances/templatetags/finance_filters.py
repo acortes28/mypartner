@@ -21,6 +21,14 @@ def clp_abs(value):
 
 
 @register.filter
+def abs_val(value):
+    try:
+        return abs(int(value))
+    except (ValueError, TypeError):
+        return 0
+
+
+@register.filter
 def is_negative(value):
     try:
         return int(value) < 0

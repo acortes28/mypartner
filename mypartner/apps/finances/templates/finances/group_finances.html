@@ -13,10 +13,14 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
         </svg>
       </a>
-      <div>
+      <div class="flex-1">
         <p class="text-green-300 text-xs font-semibold uppercase tracking-wide">Grupo · {{ miembros|length }} miembro{{ miembros|length|pluralize:"s" }}</p>
         <h1 class="text-xl font-extrabold">{{ grupo.nombre }}</h1>
       </div>
+      <a href="{% url 'finances-savings-group' grupo.id %}"
+         class="px-3 py-1.5 bg-green-600 hover:bg-green-500 rounded-lg text-xs font-semibold transition-colors flex-shrink-0">
+        🐷 Ahorros
+      </a>
     </div>
 
     <!-- KPIs -->

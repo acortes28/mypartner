@@ -1,5 +1,8 @@
 from django.contrib import admin
-from .models import Concepto, DivisionPresupuesto, GastoCompartido, Movimiento, RegistroPresupuesto, ReplicaGrupal
+from .models import (
+    AporteAhorro, Concepto, DivisionPresupuesto, GastoCompartido,
+    MetaAhorro, Movimiento, RegistroPresupuesto, ReplicaGrupal,
+)
 
 
 @admin.register(Concepto)
@@ -38,3 +41,17 @@ class ReplicaGrupalAdmin(admin.ModelAdmin):
 @admin.register(DivisionPresupuesto)
 class DivisionPresupuestoAdmin(admin.ModelAdmin):
     list_display = ['registro_presupuesto', 'usuario', 'grupo', 'monto', 'created_at']
+
+
+@admin.register(MetaAhorro)
+class MetaAhorroAdmin(admin.ModelAdmin):
+    list_display = ['nombre', 'tipo', 'monto_objetivo', 'usuario', 'grupo', 'activa', 'fecha_limite', 'created_at']
+    list_filter = ['tipo', 'activa']
+    search_fields = ['nombre', 'usuario__username', 'grupo__nombre']
+
+
+@admin.register(AporteAhorro)
+class AporteAhorroAdmin(admin.ModelAdmin):
+    list_display = ['meta', 'usuario', 'monto', 'fecha', 'created_at']
+    search_fields = ['meta__nombre', 'usuario__username']
+    ordering = ['-fecha']

@@ -1,0 +1,216 @@
+{% extends 'base.html' %}
+{% load finance_filters %}
+{% block title %}{{ meta.nombre }} — {{ grupo.nombre }}{% endblock %}
+
+{% block content %}
+<div x-data="{
+  panel: null,
+  montoAporte: '',
+  showEdit: false,
+  editNombre: '{{ meta.nombre|escapejs }}',
+  editMonto: '{{ meta.monto_objetivo }}',
+  editFecha: '{{ meta.fecha_limite|default:'' }}',
+  get aporteValido() { return parseInt(this.montoAporte) > 0; },
+  get editValido() { return this.editNombre.trim() && parseInt(this.editMonto) > 0; }
+}" class="pb-10">
+
+  <!-- Header -->
+  <div class="bg-green-800 text-white px-4 pt-2 pb-6">
+    <div class="flex items-center gap-3 mb-4">
+      <a href="{% url 'finances-savings-group' grupo.id %}" class="p-1.5 rounded-lg hover:bg-green-700 transition-colors">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+      </a>
+      <div class="flex-1 min-w-0">
+        <p class="text-green-300 text-xs font-semibold uppercase tracking-wide">{{ grupo.nombre }}</p>
+        <h1 class="text-xl font-extrabold truncate">{{ meta.nombre }}</h1>
+      </div>
+      {% if es_admin %}
+      <button @click="showEdit = !showEdit"
+              class="p-1.5 rounded-lg hover:bg-green-700 transition-colors flex-shrink-0">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+        </svg>
+      </button>
+      {% endif %}
+    </div>
+
+    <!-- Progreso -->
+    <div class="bg-green-700/50 rounded-2xl p-4">
+      <div class="flex justify-between items-end mb-3">
+        <div>
+          <p class="text-green-300 text-xs font-semibold">Ahorrado</p>
+          <p class="text-2xl font-extrabold">{{ ahorrado|clp }}</p>
+        </div>
+        <div class="text-right">
+          <p class="text-green-300 text-xs font-semibold">Objetivo</p>
+          <p class="text-lg font-bold text-green-200">{{ meta.monto_objetivo|clp }}</p>
+        </div>
+      </div>
+      <div class="h-3 bg-green-900/50 rounded-full overflow-hidden mb-2">
+        <div class="h-full rounded-full {% if completada %}bg-green-400{% else %}bg-blue-400{% endif %}"
+             style="width: {{ pct }}%"></div>
+      </div>
+      <div class="flex justify-between text-xs">
+        <span class="text-green-200 font-bold text-base">{{ pct }}%</span>
+        {% if meta.fecha_limite %}
+          {% if dias is not None %}
+            {% if dias < 0 %}
+              <span class="text-red-300 font-medium">Venció</span>
+            {% elif dias == 0 %}
+              <span class="text-orange-300 font-medium">Vence hoy</span>
+            {% else %}
+              <span class="text-green-300">{{ dias }} día{{ dias|pluralize:"s" }}</span>
+            {% endif %}
+          {% endif %}
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="px-4 pt-4 space-y-4">
+
+    <!-- Formulario editar (solo admin) -->
+    {% if es_admin %}
+    <div x-show="showEdit" x-transition class="bg-white rounded-2xl shadow-sm p-5 space-y-3">
+      <p class="text-sm font-bold text-gray-800">Editar meta</p>
+      <form method="post" class="space-y-3">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="editar">
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">Nombre *</label>
+          <input type="text" name="nombre" x-model="editNombre" required
+                 class="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-600 text-sm">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">Monto objetivo (CLP) *</label>
+          <input type="text" inputmode="numeric" name="monto_objetivo" x-model="editMonto"
+                 @input="editMonto = $event.target.value.replace(/[^\d]/g, ''); $event.target.value = editMonto"
+                 @focus="$el.value = editMonto || ''"
+                 @blur="$el.value = editMonto ? parseInt(editMonto).toLocaleString('es-CL') : ''"
+                 required
+                 class="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-600 text-sm">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">Fecha límite (opcional)</label>
+          <input type="date" name="fecha_limite" x-model="editFecha"
+                 class="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-600 text-sm">
+        </div>
+        <div class="flex gap-2">
+          <button type="submit" :disabled="!editValido"
+                  class="flex-1 py-2.5 bg-green-700 hover:bg-green-800 disabled:opacity-40 text-white font-bold rounded-xl text-sm">
+            Guardar
+          </button>
+          <button type="button" @click="showEdit = false"
+                  class="px-4 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-600">
+            Cancelar
+          </button>
+        </div>
+      </form>
+      <form method="post" class="pt-2 border-t border-gray-100">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="archivar">
+        <button type="submit"
+                class="w-full py-2 text-xs text-red-500 hover:text-red-700 font-semibold text-center">
+          Archivar meta
+        </button>
+      </form>
+    </div>
+    {% endif %}
+
+    <!-- Botón aportar -->
+    <button @click="panel = 'aportar'"
+            class="w-full flex items-center justify-center gap-2 py-4 bg-green-700 hover:bg-green-800 text-white rounded-2xl font-bold text-sm transition-colors">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/>
+      </svg>
+      Aportar a esta meta
+    </button>
+
+    <!-- Desglose por miembro -->
+    {% if desglose %}
+    <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+      <div class="px-5 py-3 bg-gray-50 border-b border-gray-100">
+        <p class="text-xs font-bold text-gray-500 uppercase tracking-wide">Aportes por miembro</p>
+      </div>
+      {% for item in desglose %}
+      <div class="flex items-center gap-3 px-5 py-3.5 border-b border-gray-50 last:border-0">
+        <div class="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center text-sm font-bold text-green-700 flex-shrink-0">
+          {{ item.username|first|upper }}
+        </div>
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-semibold text-gray-900">{{ item.username }}</p>
+          <div class="h-1.5 bg-gray-100 rounded-full overflow-hidden mt-1">
+            <div class="h-full bg-blue-400 rounded-full" style="width: {{ item.pct_aporte }}%"></div>
+          </div>
+        </div>
+        <div class="text-right flex-shrink-0">
+          <p class="text-sm font-bold text-gray-900">{{ item.monto|clp }}</p>
+          <p class="text-xs text-gray-400">{{ item.pct_aporte }}%</p>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Historial -->
+    <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+      <div class="px-5 py-3 bg-gray-50 border-b border-gray-100">
+        <p class="text-xs font-bold text-gray-500 uppercase tracking-wide">Historial de aportes</p>
+      </div>
+      {% if aportes %}
+        {% for a in aportes %}
+        <div class="flex items-center justify-between px-5 py-3.5 border-b border-gray-50 last:border-0">
+          <div class="flex items-center gap-2.5">
+            <div class="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-600">
+              {{ a.usuario.username|first|upper }}
+            </div>
+            <div>
+              <p class="text-sm font-semibold text-gray-900">{{ a.usuario.username }}</p>
+              <p class="text-xs text-gray-400">{{ a.fecha|date:"d/m/Y H:i" }}</p>
+            </div>
+          </div>
+          <span class="text-sm font-extrabold {% if a.monto < 0 %}text-red-600{% else %}text-green-600{% endif %}">
+            {% if a.monto < 0 %}-{% else %}+{% endif %}{{ a.monto|clp_abs }}
+          </span>
+        </div>
+        {% endfor %}
+      {% else %}
+        <p class="text-center py-8 text-gray-400 text-sm">Sin aportes aún</p>
+      {% endif %}
+    </div>
+
+  </div>
+
+  <!-- Modal Aportar -->
+  <div x-show="panel === 'aportar'" x-cloak
+       class="fixed inset-0 bg-black/50 z-40 flex items-end justify-center"
+       @click.self="panel = null">
+    <div class="bg-white rounded-t-2xl w-full max-w-md p-6 slide-up">
+      <div class="flex justify-between items-center mb-5">
+        <h3 class="font-bold text-gray-900 text-lg">Aportar al grupo</h3>
+        <button @click="panel = null" class="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+      </div>
+      <form method="post" class="space-y-4">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="aportar">
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Monto (CLP) *</label>
+          <input type="text" inputmode="numeric" name="monto" x-model="montoAporte"
+                 @input="montoAporte = $event.target.value.replace(/[^\d]/g, ''); $event.target.value = montoAporte"
+                 @focus="$el.value = montoAporte || ''"
+                 @blur="$el.value = montoAporte ? parseInt(montoAporte).toLocaleString('es-CL') : ''"
+                 placeholder="0" autofocus
+                 class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-600 text-sm">
+        </div>
+        <button type="submit" :disabled="!aporteValido"
+                class="w-full py-3.5 bg-green-700 hover:bg-green-800 disabled:opacity-40 text-white font-bold rounded-xl text-sm">
+          Confirmar aporte
+        </button>
+      </form>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

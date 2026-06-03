@@ -18,8 +18,8 @@ from apps.notifications.models import Notificacion
 from apps.notifications.services import crear_notificaciones_grupo
 
 from .models import (
-    Concepto, DivisionPresupuesto, GastoCompartido,
-    Movimiento, RegistroPresupuesto, ReplicaGrupal,
+    AporteAhorro, Concepto, DivisionPresupuesto, GastoCompartido,
+    MetaAhorro, Movimiento, RegistroPresupuesto, ReplicaGrupal,
 )
 
 User = get_user_model()
@@ -843,3 +843,343 @@ def split_confirm_view(request):
         return JsonResponse({'error': f'Datos inválidos: {e}'}, status=400)
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+
+
+# ── Ahorros personales ───────────────────────────────────────────────────────
+
+def _parse_monto_ahorro(raw):
+    return int(str(raw).replace('.', '').replace(',', ''))
+
+
+def _get_or_create_concepto_ahorro(user, tipo):
+    """Devuelve el concepto personal de ahorro para el usuario (Gasto o Ingreso)."""
+    nombre = 'Ahorro' if tipo == Concepto.TIPO_GASTO else 'Retiro de ahorro'
+    concepto, _ = Concepto.objects.get_or_create(
+        nombre=nombre,
+        usuario=user,
+        defaults={'tipo': tipo, 'activo': True, 'grupo': None},
+    )
+    return concepto
+
+
+def _savings_hito_msg(pct):
+    if pct >= 100:
+        return 'completada'
+    if pct >= 75:
+        return 'setenta_y_cinco'
+    if pct >= 50:
+        return 'cincuenta'
+    return None
+
+
+def _build_metas_data(metas_qs):
+    hoy = date.today()
+    result = []
+    for m in metas_qs:
+        ahorrado = m.ahorrado or 0
+        pct = min(100, round(ahorrado / m.monto_objetivo * 100)) if m.monto_objetivo else 0
+        dias = (m.fecha_limite - hoy).days if m.fecha_limite else None
+        result.append({
+            'meta': m,
+            'ahorrado': ahorrado,
+            'pct': pct,
+            'dias': dias,
+            'completada': ahorrado >= m.monto_objetivo,
+        })
+    return result
+
+
+@login_required
+def savings_personal_view(request):
+    if request.method == 'POST':
+        nombre = request.POST.get('nombre', '').strip()
+        fecha_limite_str = request.POST.get('fecha_limite', '').strip()
+        try:
+            monto_objetivo = _parse_monto_ahorro(request.POST.get('monto_objetivo', '0'))
+            assert monto_objetivo > 0 and nombre
+            fecha_limite = date.fromisoformat(fecha_limite_str) if fecha_limite_str else None
+            MetaAhorro.objects.create(
+                nombre=nombre,
+                monto_objetivo=monto_objetivo,
+                fecha_limite=fecha_limite,
+                tipo=MetaAhorro.TIPO_PERSONAL,
+                usuario=request.user,
+                grupo=None,
+            )
+            messages.success(request, f'Meta "{nombre}" creada.')
+        except (ValueError, AssertionError):
+            messages.error(request, 'Datos inválidos.')
+        return redirect('finances-savings-personal')
+
+    metas = (
+        MetaAhorro.objects
+        .filter(usuario=request.user, tipo=MetaAhorro.TIPO_PERSONAL, activa=True)
+        .annotate(ahorrado=Sum('aportes__monto'))
+        .order_by('fecha_limite', 'created_at')
+    )
+    return render(request, 'finances/savings_personal.html', {
+        'metas_data': _build_metas_data(metas),
+    })
+
+
+@login_required
+def savings_personal_detail_view(request, meta_id):
+    meta = get_object_or_404(
+        MetaAhorro, id=meta_id, usuario=request.user, tipo=MetaAhorro.TIPO_PERSONAL
+    )
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+
+        if action == 'aportar':
+            try:
+                monto = _parse_monto_ahorro(request.POST.get('monto', '0'))
+                assert monto > 0
+                with transaction.atomic():
+                    concepto = _get_or_create_concepto_ahorro(request.user, Concepto.TIPO_GASTO)
+                    mov = Movimiento.objects.create(
+                        tipo=Movimiento.TIPO_GASTO,
+                        nombre=f'Ahorro: {meta.nombre}',
+                        detalle='Aporte a meta de ahorro',
+                        monto=monto,
+                        concepto=concepto,
+                        usuario=request.user,
+                        grupo=None,
+                        fecha_hora=timezone.now(),
+                    )
+                    AporteAhorro.objects.create(
+                        meta=meta, usuario=request.user,
+                        monto=monto, fecha=timezone.now(), movimiento=mov,
+                    )
+                    ahorrado = meta.aportes.aggregate(t=Sum('monto'))['t'] or 0
+                    pct = ahorrado / meta.monto_objetivo * 100 if meta.monto_objetivo else 0
+                    hito = _savings_hito_msg(pct)
+                    if hito == 'completada':
+                        messages.success(request, f'¡Completaste tu meta "{meta.nombre}"! 🎉')
+                    elif hito == 'setenta_y_cinco':
+                        messages.success(request, f'¡Vas al 75% de "{meta.nombre}"!')
+                    elif hito == 'cincuenta':
+                        messages.success(request, f'¡Llegaste al 50% de "{meta.nombre}"!')
+                    else:
+                        messages.success(request, 'Aporte registrado.')
+            except (ValueError, AssertionError):
+                messages.error(request, 'Monto inválido.')
+
+        elif action == 'retirar':
+            try:
+                monto = _parse_monto_ahorro(request.POST.get('monto', '0'))
+                ahorrado = meta.aportes.aggregate(t=Sum('monto'))['t'] or 0
+                assert 0 < monto <= ahorrado
+                with transaction.atomic():
+                    concepto = _get_or_create_concepto_ahorro(request.user, Concepto.TIPO_INGRESO)
+                    mov = Movimiento.objects.create(
+                        tipo=Movimiento.TIPO_INGRESO,
+                        nombre=f'Retiro de ahorro: {meta.nombre}',
+                        detalle='Retiro de meta de ahorro',
+                        monto=monto,
+                        concepto=concepto,
+                        usuario=request.user,
+                        grupo=None,
+                        fecha_hora=timezone.now(),
+                    )
+                    AporteAhorro.objects.create(
+                        meta=meta, usuario=request.user,
+                        monto=-monto, fecha=timezone.now(), movimiento=mov,
+                    )
+                messages.success(request, 'Retiro registrado.')
+            except (ValueError, AssertionError):
+                messages.error(request, 'Monto de retiro inválido.')
+
+        elif action == 'editar':
+            nombre = request.POST.get('nombre', '').strip()
+            fecha_limite_str = request.POST.get('fecha_limite', '').strip()
+            try:
+                monto_objetivo = _parse_monto_ahorro(request.POST.get('monto_objetivo', '0'))
+                assert monto_objetivo > 0 and nombre
+                meta.nombre = nombre
+                meta.monto_objetivo = monto_objetivo
+                meta.fecha_limite = date.fromisoformat(fecha_limite_str) if fecha_limite_str else None
+                meta.save()
+                messages.success(request, 'Meta actualizada.')
+            except (ValueError, AssertionError):
+                messages.error(request, 'Datos inválidos.')
+
+        elif action == 'archivar':
+            meta.activa = False
+            meta.save()
+            messages.success(request, f'Meta "{meta.nombre}" archivada.')
+            return redirect('finances-savings-personal')
+
+        return redirect('finances-savings-personal-detail', meta_id=meta_id)
+
+    aportes = meta.aportes.select_related('usuario').order_by('-fecha')
+    ahorrado = aportes.aggregate(t=Sum('monto'))['t'] or 0
+    pct = min(100, round(ahorrado / meta.monto_objetivo * 100)) if meta.monto_objetivo else 0
+    dias = (meta.fecha_limite - date.today()).days if meta.fecha_limite else None
+
+    return render(request, 'finances/savings_personal_detail.html', {
+        'meta': meta,
+        'aportes': aportes,
+        'ahorrado': ahorrado,
+        'pct': pct,
+        'dias': dias,
+        'completada': ahorrado >= meta.monto_objetivo,
+    })
+
+
+# ── Ahorros grupales ─────────────────────────────────────────────────────────
+
+@login_required
+def savings_group_view(request, group_id):
+    grupo = get_object_or_404(Grupo, id=group_id, activo=True)
+    get_object_or_404(GrupoMiembro, usuario=request.user, grupo=grupo)
+    es_admin = GrupoMiembro.objects.filter(
+        usuario=request.user, grupo=grupo, rol=GrupoMiembro.ROL_ADMIN
+    ).exists()
+
+    if request.method == 'POST':
+        if not es_admin:
+            messages.error(request, 'Solo el admin puede crear metas grupales.')
+            return redirect('finances-savings-group', group_id=group_id)
+
+        nombre = request.POST.get('nombre', '').strip()
+        fecha_limite_str = request.POST.get('fecha_limite', '').strip()
+        notificar = request.POST.get('notificar') == '1'
+        try:
+            monto_objetivo = _parse_monto_ahorro(request.POST.get('monto_objetivo', '0'))
+            assert monto_objetivo > 0 and nombre
+            fecha_limite = date.fromisoformat(fecha_limite_str) if fecha_limite_str else None
+            meta = MetaAhorro.objects.create(
+                nombre=nombre,
+                monto_objetivo=monto_objetivo,
+                fecha_limite=fecha_limite,
+                tipo=MetaAhorro.TIPO_GRUPAL,
+                usuario=None,
+                grupo=grupo,
+            )
+            if notificar:
+                crear_notificaciones_grupo(
+                    grupo, Notificacion.TIPO_GASTO,
+                    f'{request.user.username} creó la meta de ahorro grupal "{nombre}".',
+                    referencia_id=meta.id,
+                    excluir_usuario=request.user,
+                )
+            messages.success(request, f'Meta grupal "{nombre}" creada.')
+        except (ValueError, AssertionError):
+            messages.error(request, 'Datos inválidos.')
+        return redirect('finances-savings-group', group_id=group_id)
+
+    metas = (
+        MetaAhorro.objects
+        .filter(grupo=grupo, tipo=MetaAhorro.TIPO_GRUPAL, activa=True)
+        .annotate(ahorrado=Sum('aportes__monto'))
+        .order_by('fecha_limite', 'created_at')
+    )
+    return render(request, 'finances/savings_group.html', {
+        'grupo': grupo,
+        'metas_data': _build_metas_data(metas),
+        'es_admin': es_admin,
+    })
+
+
+@login_required
+def savings_group_detail_view(request, group_id, meta_id):
+    grupo = get_object_or_404(Grupo, id=group_id, activo=True)
+    get_object_or_404(GrupoMiembro, usuario=request.user, grupo=grupo)
+    es_admin = GrupoMiembro.objects.filter(
+        usuario=request.user, grupo=grupo, rol=GrupoMiembro.ROL_ADMIN
+    ).exists()
+    meta = get_object_or_404(MetaAhorro, id=meta_id, grupo=grupo, tipo=MetaAhorro.TIPO_GRUPAL)
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+
+        if action == 'aportar':
+            try:
+                monto = _parse_monto_ahorro(request.POST.get('monto', '0'))
+                assert monto > 0
+                with transaction.atomic():
+                    concepto = _get_or_create_concepto_ahorro(request.user, Concepto.TIPO_GASTO)
+                    mov = Movimiento.objects.create(
+                        tipo=Movimiento.TIPO_GASTO,
+                        nombre=f'Ahorro grupal: {meta.nombre}',
+                        detalle=f'Aporte a meta de ahorro del grupo {grupo.nombre}',
+                        monto=monto,
+                        concepto=concepto,
+                        usuario=request.user,
+                        grupo=None,
+                        fecha_hora=timezone.now(),
+                    )
+                    AporteAhorro.objects.create(
+                        meta=meta, usuario=request.user,
+                        monto=monto, fecha=timezone.now(), movimiento=mov,
+                    )
+                    ahorrado = meta.aportes.aggregate(t=Sum('monto'))['t'] or 0
+                    pct = ahorrado / meta.monto_objetivo * 100 if meta.monto_objetivo else 0
+                    hito = _savings_hito_msg(pct)
+                    if hito == 'completada':
+                        crear_notificaciones_grupo(
+                            grupo, Notificacion.TIPO_GASTO,
+                            f'¡La meta de ahorro "{meta.nombre}" fue completada!',
+                            referencia_id=meta.id,
+                        )
+                        messages.success(request, f'¡Meta "{meta.nombre}" completada! 🎉')
+                    elif hito == 'setenta_y_cinco':
+                        messages.success(request, f'¡El grupo va al 75% de "{meta.nombre}"!')
+                    elif hito == 'cincuenta':
+                        messages.success(request, f'¡El grupo llegó al 50% de "{meta.nombre}"!')
+                    else:
+                        messages.success(request, 'Aporte registrado.')
+            except (ValueError, AssertionError):
+                messages.error(request, 'Monto inválido.')
+
+        elif action == 'archivar' and es_admin:
+            meta.activa = False
+            meta.save()
+            messages.success(request, f'Meta "{meta.nombre}" archivada.')
+            return redirect('finances-savings-group', group_id=group_id)
+
+        elif action == 'editar' and es_admin:
+            nombre = request.POST.get('nombre', '').strip()
+            fecha_limite_str = request.POST.get('fecha_limite', '').strip()
+            try:
+                monto_objetivo = _parse_monto_ahorro(request.POST.get('monto_objetivo', '0'))
+                assert monto_objetivo > 0 and nombre
+                meta.nombre = nombre
+                meta.monto_objetivo = monto_objetivo
+                meta.fecha_limite = date.fromisoformat(fecha_limite_str) if fecha_limite_str else None
+                meta.save()
+                messages.success(request, 'Meta actualizada.')
+            except (ValueError, AssertionError):
+                messages.error(request, 'Datos inválidos.')
+
+        return redirect('finances-savings-group-detail', group_id=group_id, meta_id=meta_id)
+
+    aportes = meta.aportes.select_related('usuario').order_by('-fecha')
+    ahorrado = aportes.aggregate(t=Sum('monto'))['t'] or 0
+    pct = min(100, round(ahorrado / meta.monto_objetivo * 100)) if meta.monto_objetivo else 0
+    dias = (meta.fecha_limite - date.today()).days if meta.fecha_limite else None
+
+    miembros = GrupoMiembro.objects.filter(grupo=grupo).select_related('usuario')
+    desglose = []
+    for mem in miembros:
+        monto_mem = aportes.filter(usuario=mem.usuario).aggregate(t=Sum('monto'))['t'] or 0
+        if monto_mem > 0:
+            desglose.append({
+                'username': mem.usuario.username,
+                'monto': monto_mem,
+                'pct_aporte': round(monto_mem / ahorrado * 100) if ahorrado else 0,
+            })
+    desglose.sort(key=lambda x: x['monto'], reverse=True)
+
+    return render(request, 'finances/savings_group_detail.html', {
+        'grupo': grupo,
+        'meta': meta,
+        'aportes': aportes,
+        'ahorrado': ahorrado,
+        'pct': pct,
+        'dias': dias,
+        'completada': ahorrado >= meta.monto_objetivo,
+        'es_admin': es_admin,
+        'desglose': desglose,
+    })
