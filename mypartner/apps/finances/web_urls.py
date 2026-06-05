@@ -7,6 +7,7 @@ urlpatterns = [
     path('finances/concepts/', web_views.concepts_view, name='finances-concepts'),
     path('finances/movements/', web_views.movements_view, name='finances-movements'),
     path('finances/movements/<uuid:movement_id>/', web_views.movement_detail_view, name='finances-movement-detail'),
+    path('finances/movements/<uuid:movement_id>/correct/', web_views.movement_correct_view, name='finances-movement-correct'),
     path('finances/export/', web_views.export_csv_view, name='finances-export'),
     path('finances/add-movement/', web_views.add_movement_view, name='finances-add-movement'),
     path('finances/shared/', web_views.gastos_compartidos_view, name='finances-shared'),

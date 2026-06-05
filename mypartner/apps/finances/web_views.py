@@ -323,8 +323,9 @@ def budget_view(request):
     next_mes = f'{anio + next_offset // 12:04d}-{next_offset % 12 + 1:02d}'
 
     base_qs = RegistroPresupuesto.objects.filter(usuario=request.user, grupo__isnull=True).filter(
-        Q(periodicidad='Mensual') |
-        Q(periodicidad='Anual', fecha__month=mes) |
+        Q(periodicidad='Mensual', fecha__year__lt=anio) |
+        Q(periodicidad='Mensual', fecha__year=anio, fecha__month__lte=mes) |
+        Q(periodicidad='Anual', fecha__month=mes, fecha__year__lte=anio) |
         Q(periodicidad='Puntual', fecha__year=anio, fecha__month=mes)
     ).filter(
         Q(fecha_fin__isnull=True) |
@@ -450,6 +451,85 @@ def movement_detail_view(request, movement_id):
     return render(request, 'finances/movement_detail.html', {
         'movimiento': mov, 'replicas': replicas,
     })
+
+
+@login_required
+def movement_correct_view(request, movement_id):
+    if request.method != 'POST':
+        return redirect('finances-movement-detail', movement_id=movement_id)
+
+    mov = get_object_or_404(
+        Movimiento,
+        id=movement_id,
+        usuario=request.user,
+        grupo__isnull=True,
+        tipo=Movimiento.TIPO_GASTO,
+    )
+
+    monto_final_str = request.POST.get('monto_final', '0').replace('.', '').replace(',', '')
+    try:
+        monto_final = int(monto_final_str)
+        assert monto_final > 0
+    except (ValueError, AssertionError):
+        messages.error(request, 'Monto inválido.')
+        return redirect('finances-movement-detail', movement_id=movement_id)
+
+    diferencia = monto_final - mov.monto
+    if diferencia == 0:
+        messages.warning(request, 'El monto es igual al original, no hay corrección que registrar.')
+        return redirect('finances-movement-detail', movement_id=movement_id)
+
+    tipo_correccion = Movimiento.TIPO_GASTO if diferencia > 0 else Movimiento.TIPO_INGRESO
+    monto_correccion = abs(diferencia)
+    monto_original = mov.monto
+
+    with transaction.atomic():
+        Movimiento.objects.create(
+            tipo=tipo_correccion,
+            nombre='Corrección de gasto',
+            detalle=f'Corrección de «{mov.nombre}»: ${monto_original:,} → ${monto_final:,}'.replace(',', '.'),
+            monto=monto_correccion,
+            concepto=None,
+            usuario=request.user,
+            grupo=None,
+            fecha_hora=timezone.now(),
+        )
+
+        replicas = (
+            ReplicaGrupal.objects
+            .filter(movimiento_personal=mov)
+            .select_related('movimiento_grupo')
+        )
+        for replica in replicas:
+            mov_grupo = replica.movimiento_grupo
+            compartidos = (
+                GastoCompartido.objects
+                .filter(movimiento=mov_grupo, pagado=False)
+                .select_related('usuario_deudor')
+            )
+            for gc in compartidos:
+                monto_anterior = gc.monto_pendiente
+                nuevo_monto = max(1, round(monto_anterior * monto_final / monto_original))
+                gc.monto_pendiente = nuevo_monto
+                gc.save()
+                Notificacion.objects.create(
+                    titulo=(
+                        f'{request.user.username} corrigió el gasto «{mov.nombre}»: '
+                        f'tu deuda cambió de ${monto_anterior:,} a ${nuevo_monto:,}.'
+                    ).replace(',', '.'),
+                    tipo=Notificacion.TIPO_GASTO_COMPARTIDO,
+                    referencia_id=mov_grupo.id,
+                    usuario=gc.usuario_deudor,
+                )
+            mov_grupo.monto = monto_final
+            mov_grupo.save()
+
+    signo = '+' if diferencia > 0 else '-'
+    messages.success(
+        request,
+        f'Corrección registrada: {signo}${monto_correccion:,} como {tipo_correccion.lower()}.'.replace(',', '.')
+    )
+    return redirect('finances-movement-detail', movement_id=movement_id)
 
 
 @login_required
@@ -788,21 +868,41 @@ def split_confirm_view(request):
         if monto_total <= 0:
             return JsonResponse({'error': 'El monto total debe ser mayor a cero.'}, status=400)
 
+        payer_id = str(data.get('payer_id') or request.user.id)
+        try:
+            payer = User.objects.get(id=payer_id)
+        except User.DoesNotExist:
+            return JsonResponse({'error': 'El pagador seleccionado no existe.'}, status=400)
+        if not GrupoMiembro.objects.filter(usuario=payer, grupo=grupo).exists():
+            return JsonResponse({'error': 'El pagador no es miembro del grupo.'}, status=400)
+
         with transaction.atomic():
-            concepto, _ = Concepto.objects.get_or_create(
+            concepto_grupo, _ = Concepto.objects.get_or_create(
                 grupo=grupo, nombre=concepto_nombre, tipo='Gasto',
                 defaults={'activo': True, 'usuario': None},
+            )
+            concepto_personal, _ = Concepto.objects.get_or_create(
+                usuario=payer, nombre=concepto_nombre, tipo='Gasto',
+                defaults={'activo': True, 'grupo': None},
+            )
+            Movimiento.objects.create(
+                tipo='Gasto', nombre=concepto_nombre,
+                detalle='División de gastos (pagador)',
+                monto=monto_total,
+                concepto=concepto_personal,
+                usuario=payer, grupo=None,
+                fecha_hora=timezone.now(),
             )
             mov = Movimiento.objects.create(
                 tipo='Gasto', nombre=concepto_nombre,
                 detalle='Asistente de división de gastos',
-                monto=monto_total, concepto=concepto,
-                usuario=request.user, grupo=grupo,
+                monto=monto_total, concepto=concepto_grupo,
+                usuario=payer, grupo=grupo,
                 fecha_hora=timezone.now(),
             )
             gastos_creados = []
             for d in distribuciones:
-                if str(d['usuario_id']) == str(request.user.id):
+                if str(d['usuario_id']) == str(payer.id):
                     continue
                 monto_deudor = int(d['monto'])
                 if monto_deudor <= 0:
@@ -815,14 +915,14 @@ def split_confirm_view(request):
                     continue
                 GastoCompartido.objects.create(
                     movimiento=mov,
-                    usuario_acreedor=request.user,
+                    usuario_acreedor=payer,
                     usuario_deudor=deudor,
                     monto_pendiente=monto_deudor,
                     grupo=grupo,
                 )
                 Notificacion.objects.create(
                     titulo=(
-                        f'{request.user.username} te asignó ${monto_deudor:,} '
+                        f'{payer.username} te asignó ${monto_deudor:,} '
                         f'en "{concepto_nombre}" ({grupo.nombre}).'
                     ).replace(',', '.'),
                     tipo=Notificacion.TIPO_GASTO_COMPARTIDO,
@@ -830,6 +930,17 @@ def split_confirm_view(request):
                     usuario=deudor,
                 )
                 gastos_creados.append({'username': d.get('username', ''), 'monto': monto_deudor})
+
+            if str(payer.id) != str(request.user.id):
+                Notificacion.objects.create(
+                    titulo=(
+                        f'{request.user.username} te registró como pagador de '
+                        f'${monto_total:,} en "{concepto_nombre}" ({grupo.nombre}).'
+                    ).replace(',', '.'),
+                    tipo=Notificacion.TIPO_GASTO_COMPARTIDO,
+                    referencia_id=mov.id,
+                    usuario=payer,
+                )
 
             crear_notificaciones_grupo(
                 grupo, Notificacion.TIPO_GASTO,
