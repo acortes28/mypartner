@@ -101,7 +101,7 @@
 
   <!-- Eliminar grupo -->
   <button type="button"
-          @click="confirmTitle = 'Eliminar grupo'; confirmMessage = '¿Eliminar el grupo \"{{ grupo.nombre }}\" permanentemente? Esta acción no se puede deshacer.'; confirmBtnText = 'Eliminar grupo'; confirmAction = ''; confirmFields = {action: 'delete_group'}; confirmModal = true"
+          @click="confirmTitle = 'Eliminar grupo'; confirmMessage = '¿Eliminar permanentemente el grupo {{ grupo.nombre }}? Esta acción no se puede deshacer.'; confirmBtnText = 'Eliminar grupo'; confirmAction = ''; confirmFields = {action: 'delete_group'}; confirmModal = true"
           class="w-full py-3 border-2 border-red-300 text-red-600 font-bold rounded-xl text-sm hover:bg-red-50 transition-colors">
     🗑 Eliminar grupo
   </button>
@@ -109,7 +109,7 @@
   {% else %}
   <!-- Abandonar grupo -->
   <button type="button"
-          @click="confirmTitle = 'Abandonar grupo'; confirmMessage = '¿Abandonar el grupo \"{{ grupo.nombre }}\"? Dejarás de tener acceso a sus finanzas y datos.'; confirmBtnText = 'Abandonar'; confirmAction = ''; confirmFields = {action: 'leave_group'}; confirmModal = true"
+          @click="confirmTitle = 'Abandonar grupo'; confirmMessage = '¿Abandonar el grupo {{ grupo.nombre }}? Dejarás de tener acceso a sus finanzas y datos.'; confirmBtnText = 'Abandonar'; confirmAction = ''; confirmFields = {action: 'leave_group'}; confirmModal = true"
           class="w-full py-3 border-2 border-orange-300 text-orange-600 font-bold rounded-xl text-sm hover:bg-orange-50 transition-colors">
     Abandonar grupo
   </button>
