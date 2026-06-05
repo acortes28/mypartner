@@ -80,6 +80,11 @@ def announcement_detail_view(request, group_id, announcement_id):
             contenido = request.POST.get('contenido', '').strip()
             if contenido:
                 Comentario.objects.create(contenido=contenido, anuncio=anuncio, usuario=request.user)
+                crear_notificaciones_grupo(
+                    grupo, Notificacion.TIPO_ANUNCIO,
+                    f'{request.user.username} comentó en "{anuncio.nombre}": {contenido[:80]}',
+                    referencia_id=anuncio.id, excluir_usuario=request.user,
+                )
                 messages.success(request, 'Comentario agregado.')
             else:
                 messages.error(request, 'El comentario no puede estar vacío.')

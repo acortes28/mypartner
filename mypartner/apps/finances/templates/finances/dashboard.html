@@ -8,6 +8,7 @@
 {% endblock %}
 
 {% block content %}
+<script>window._tarjetasTipos = {{ tarjetas_tipos_json|safe }};</script>
 <div x-data="{
   panel: new URLSearchParams(window.location.search).get('panel'),
   sideMenu: false,
@@ -21,9 +22,18 @@
   usuarioDeudor: '',
   montoCompartido: '',
   porcentajeCompartido: '',
+  /* Medio de pago */
+  tarjetaId: '{{ ultima_tarjeta_id }}',
+  tarjetaDebitoId: '',
+  cuotas: '1',
+  get tarjetaEsCredito() {
+    return (window._tarjetasTipos || {})[this.tarjetaId] === 'Credito';
+  },
   /* Ingreso en grupo */
   registrarEnGrupo: false,
   grupoIdIngreso: '',
+  /* Comprobante */
+  archivoNombre: '',
   get miembrosGrupo() {
     if (!this.grupoId) return [];
     return (window._miembrosPorGrupo || {})[this.grupoId] || [];
@@ -63,11 +73,13 @@
     this.esCompartido = false; this.grupoId = ''; this.usuarioDeudor = '';
     this.montoCompartido = ''; this.porcentajeCompartido = '';
     this.nombreMov = ''; this.conceptoMov = ''; this.montoMov = ''; this.detalleMov = '';
+    this.archivoNombre = ''; this.cuotas = '1';
   },
   abrirIngreso() {
     this.panel = 'ingreso';
     this.registrarEnGrupo = false; this.grupoIdIngreso = '';
     this.nombreMov = ''; this.conceptoMov = ''; this.montoMov = ''; this.detalleMov = '';
+    this.tarjetaDebitoId = '';
   }
 }" class="pb-28">
 
@@ -130,7 +142,7 @@
           <p class="text-xl font-extrabold {% if saldo_restante < 0 %}text-red-300{% endif %}">{{ saldo_restante|clp }}</p>
         </div>
         <div class="bg-green-700/50 rounded-2xl p-4 backdrop-blur-sm">
-          <p class="text-green-300 text-xs font-semibold mb-1">Desviación</p>
+          <p class="text-green-300 text-xs font-semibold mb-1">Desviación Presupuestaria</p>
           <p class="text-xl font-extrabold {% if desviacion < 0 %}text-red-300{% endif %}">{{ desviacion|clp }}</p>
         </div>
       </div>
@@ -218,6 +230,21 @@
         <input type="hidden" name="registrar_en_grupo" :value="esCompartido && grupoId ? '1' : '0'">
         <input type="hidden" name="grupo_id" :value="grupoId">
         <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Medio de pago</label>
+          <select name="tarjeta_id" x-model="tarjetaId"
+                  class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-red-400 text-sm bg-white">
+            <option value="">Efectivo</option>
+            {% for t in tarjetas %}
+            <option value="{{ t.id }}">{{ t.nombre }} · {{ t.banco }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div x-show="tarjetaEsCredito" x-transition>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Cuotas</label>
+          <input type="number" name="cuotas" x-model="cuotas" min="1" max="48"
+                 class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-red-400 text-sm">
+        </div>
+        <div>
           <label class="block text-sm font-semibold text-gray-700 mb-1.5">Nombre *</label>
           <input type="text" name="nombre" x-model="nombreMov" required
                  class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-red-400 text-sm">
@@ -277,7 +304,7 @@
   <div x-show="panel === 'gasto_compartir'" x-cloak
        class="fixed inset-0 bg-black/50 z-40 flex items-end justify-center"
        @click.self="panel = null">
-    <div class="bg-white rounded-t-2xl w-full max-w-md p-6 slide-up">
+    <div class="bg-white rounded-t-2xl w-full max-w-md p-6 slide-up max-h-[92vh] overflow-y-auto">
       <div class="flex justify-between items-center mb-5">
         <div>
           <p class="text-xs text-gray-400 font-medium mb-0.5">Paso 2 de 2</p>
@@ -285,7 +312,7 @@
         </div>
         <button @click="panel = 'gasto'" class="text-gray-400 hover:text-gray-600 text-sm font-semibold">← Volver</button>
       </div>
-      <form method="post" action="{% url 'finances-add-movement' %}" class="space-y-4">
+      <form method="post" action="{% url 'finances-add-movement' %}" enctype="multipart/form-data" class="space-y-4">
         {% csrf_token %}
         <input type="hidden" name="tipo" value="Gasto">
         <input type="hidden" name="nombre" :value="nombreMov">
@@ -297,6 +324,7 @@
         <input type="hidden" name="es_compartido" value="1">
         <input type="hidden" name="usuario_deudor" :value="usuarioDeudor">
         <input type="hidden" name="monto_compartido" :value="montoCompartido">
+        <input type="hidden" name="tarjeta_id" :value="tarjetaId">
 
         <div>
           <label class="block text-sm font-semibold text-gray-700 mb-1.5">Compartir con *</label>
@@ -348,6 +376,35 @@
           </template>
         </div>
 
+        <!-- Comprobante opcional -->
+        <div x-show="usuarioDeudor" x-transition>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">
+            Adjuntar comprobante
+            <span class="text-gray-400 font-normal text-xs">(opcional)</span>
+          </label>
+          <label class="flex items-center gap-3 w-full px-4 py-3 rounded-xl border-2 border-dashed cursor-pointer transition-colors"
+                 :class="archivoNombre ? 'border-red-300 bg-red-50' : 'border-gray-200 hover:border-red-300'">
+            <svg class="w-5 h-5 flex-shrink-0 transition-colors" :class="archivoNombre ? 'text-red-500' : 'text-gray-400'"
+                 fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
+            </svg>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm truncate transition-colors"
+                 :class="archivoNombre ? 'text-red-700 font-semibold' : 'text-gray-500'"
+                 x-text="archivoNombre || 'Seleccionar archivo'"></p>
+              <p class="text-xs text-gray-400">PDF, CSV, XLSX o PNG · máx. 10 MB</p>
+            </div>
+            <template x-if="archivoNombre">
+              <button type="button" @click.prevent="archivoNombre = ''; $el.closest('label').querySelector('input').value = ''"
+                      class="text-gray-400 hover:text-red-500 flex-shrink-0 text-lg leading-none">✕</button>
+            </template>
+            <input type="file" name="comprobante" accept=".pdf,.csv,.xlsx,.png"
+                   class="hidden"
+                   @change="archivoNombre = $event.target.files[0]?.name || ''">
+          </label>
+        </div>
+
         <button type="submit" :disabled="!gastoValido"
                 class="w-full py-3.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-bold rounded-xl text-sm">
           Registrar gasto
@@ -370,6 +427,21 @@
         <input type="hidden" name="tipo" value="Ingreso">
         <input type="hidden" name="registrar_en_grupo" :value="registrarEnGrupo && grupoIdIngreso ? '1' : '0'">
         <input type="hidden" name="grupo_id" :value="grupoIdIngreso">
+        <input type="hidden" name="tarjeta_id" :value="tarjetaDebitoId">
+        {% with tarjetas_debito=tarjetas|dictsortreversed:"created_at" %}
+        {% if tarjetas %}
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Cuenta / Tarjeta débito</label>
+          <select x-model="tarjetaDebitoId"
+                  class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-500 text-sm bg-white">
+            <option value="">Efectivo / Sin tarjeta</option>
+            {% for t in tarjetas %}{% if t.tipo == 'Debito' %}
+            <option value="{{ t.id }}">{{ t.nombre }} · {{ t.banco }}</option>
+            {% endif %}{% endfor %}
+          </select>
+        </div>
+        {% endif %}
+        {% endwith %}
         <div>
           <label class="block text-sm font-semibold text-gray-700 mb-1.5">Nombre *</label>
           <input type="text" name="nombre" x-model="nombreMov" required
@@ -491,6 +563,18 @@
         <div>
           <p class="text-sm font-bold text-gray-900">Conceptos</p>
           <p class="text-xs text-gray-400">Categorías de movimientos</p>
+        </div>
+        <svg class="w-4 h-4 text-gray-300 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+      </a>
+
+      <a href="{% url 'finances-tarjetas' %}"
+         class="flex items-center gap-3 px-4 py-3.5 rounded-xl hover:bg-blue-50 transition-colors group">
+        <div class="w-9 h-9 bg-blue-100 rounded-xl flex items-center justify-center text-lg group-hover:scale-110 transition-transform">💳</div>
+        <div>
+          <p class="text-sm font-bold text-gray-900">Tarjetas</p>
+          <p class="text-xs text-gray-400">Medios de pago</p>
         </div>
         <svg class="w-4 h-4 text-gray-300 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>

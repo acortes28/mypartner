@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import os
 from datetime import date
 
 from django.contrib import messages
@@ -17,9 +18,10 @@ from apps.groups.models import Grupo, GrupoMiembro
 from apps.notifications.models import Notificacion
 from apps.notifications.services import crear_notificaciones_grupo
 
+from apps.documents.models import Documento, ALLOWED_EXTENSIONS as DOC_ALLOWED_EXTENSIONS
 from .models import (
-    AporteAhorro, Concepto, DivisionPresupuesto, GastoCompartido,
-    MetaAhorro, Movimiento, RegistroPresupuesto, ReplicaGrupal,
+    AporteAhorro, BANCOS_CHILE, Concepto, DivisionPresupuesto, GastoCompartido,
+    MetaAhorro, Movimiento, RegistroPresupuesto, ReplicaGrupal, Tarjeta,
 )
 
 User = get_user_model()
@@ -76,13 +78,23 @@ def dashboard_view(request):
             .aggregate(t=Sum('monto'))['t'] or 0
         )
 
-    gasto_total = movimientos_qs.filter(tipo='Gasto').aggregate(t=Sum('monto'))['t'] or 0
-    ingreso_total = movimientos_qs.filter(tipo='Ingreso').aggregate(t=Sum('monto'))['t'] or 0
+    _conceptos_ahorro = ('Ahorro', 'Retiro de ahorro')
+    gasto_total = (
+        movimientos_qs.filter(tipo='Gasto')
+        .exclude(concepto__nombre__in=_conceptos_ahorro)
+        .aggregate(t=Sum('monto'))['t'] or 0
+    )
+    ingreso_total = (
+        movimientos_qs.filter(tipo='Ingreso')
+        .exclude(concepto__nombre__in=_conceptos_ahorro)
+        .aggregate(t=Sum('monto'))['t'] or 0
+    )
     saldo_restante = ingreso_total - gasto_total
     desviacion = presupuesto_acum - gasto_total
 
     gastos_concepto = (
         movimientos_qs.filter(tipo='Gasto')
+        .exclude(concepto__nombre__in=_conceptos_ahorro)
         .values('concepto__nombre')
         .annotate(total=Sum('monto'))
         .order_by('-total')
@@ -130,6 +142,21 @@ def dashboard_view(request):
         usuario_deudor=request.user, grupo_id__in=grupos_ids, pagado=False
     ).count()
 
+    tarjetas = list(Tarjeta.objects.filter(usuario=request.user, activa=True).order_by('-created_at'))
+    ultimo_mov_con_tarjeta = (
+        Movimiento.objects
+        .filter(usuario=request.user, grupo__isnull=True, tarjeta__isnull=False, tarjeta__activa=True)
+        .order_by('-fecha_hora')
+        .values_list('tarjeta_id', flat=True)
+        .first()
+    )
+    if ultimo_mov_con_tarjeta:
+        ultima_tarjeta_id = str(ultimo_mov_con_tarjeta)
+    elif tarjetas:
+        ultima_tarjeta_id = str(tarjetas[0].id)
+    else:
+        ultima_tarjeta_id = ''
+
     return render(request, 'finances/dashboard.html', {
         'gasto_total': gasto_total,
         'ingreso_total': ingreso_total,
@@ -147,6 +174,9 @@ def dashboard_view(request):
         'vista': vista,
         'tiene_grupos': memberships.exists(),
         'grupos_usuario': [{'id': str(m.grupo_id), 'nombre': m.grupo.nombre} for m in memberships],
+        'tarjetas': tarjetas,
+        'ultima_tarjeta_id': ultima_tarjeta_id,
+        'tarjetas_tipos_json': json.dumps({str(t.id): t.tipo for t in tarjetas}),
     })
 
 
@@ -566,6 +596,20 @@ def add_movement_view(request):
         es_compartido = request.POST.get('es_compartido') == '1'
         usuario_deudor_id = request.POST.get('usuario_deudor', '').strip()
         monto_compartido_str = request.POST.get('monto_compartido', '').replace('.', '').replace(',', '')
+        tarjeta_id = request.POST.get('tarjeta_id', '').strip()
+        cuotas_str = request.POST.get('cuotas', '').strip()
+
+        comprobante = request.FILES.get('comprobante')
+        grupo_doc = None
+
+        if comprobante:
+            _ext = os.path.splitext(comprobante.name)[1].lstrip('.').lower()
+            if _ext not in DOC_ALLOWED_EXTENSIONS:
+                messages.warning(request, f'Formato de comprobante no permitido ({_ext}). Solo: {", ".join(DOC_ALLOWED_EXTENSIONS)}.')
+                comprobante = None
+            elif comprobante.size > 10 * 1024 * 1024:
+                messages.warning(request, 'El comprobante supera los 10 MB y no fue adjuntado.')
+                comprobante = None
 
         try:
             monto = int(monto_str)
@@ -578,12 +622,28 @@ def add_movement_view(request):
                 except Concepto.DoesNotExist:
                     pass
 
+            tarjeta = None
+            if tarjeta_id:
+                try:
+                    tarjeta = Tarjeta.objects.get(id=tarjeta_id, usuario=request.user, activa=True)
+                except Tarjeta.DoesNotExist:
+                    pass
+
+            cuotas = None
+            if tarjeta and tarjeta.tipo == Tarjeta.TIPO_CREDITO and cuotas_str.isdigit():
+                cuotas = max(1, int(cuotas_str))
+
             with transaction.atomic():
                 mov_personal = Movimiento.objects.create(
                     tipo=tipo, nombre=nombre, detalle=detalle,
                     monto=monto, concepto=concepto, usuario=request.user,
-                    grupo=None, fecha_hora=timezone.now(),
+                    grupo=None, fecha_hora=timezone.now(), tarjeta=tarjeta,
+                    cuotas=cuotas,
                 )
+
+                if tarjeta and tarjeta.tipo == Tarjeta.TIPO_CREDITO and tipo == Movimiento.TIPO_GASTO:
+                    tarjeta.cupo_usado = (tarjeta.cupo_usado or 0) + monto
+                    tarjeta.save(update_fields=['cupo_usado'])
 
                 if registrar_en_grupo and grupo_id:
                     if not GrupoMiembro.objects.filter(
@@ -638,8 +698,21 @@ def add_movement_view(request):
                             referencia_id=mov_grupo.id,
                             usuario=miembro.usuario,
                         )
+                        grupo_doc = grupo
 
             messages.success(request, f'{tipo} registrado exitosamente.')
+
+            if comprobante and grupo_doc:
+                ext = os.path.splitext(comprobante.name)[1].lstrip('.').lower()
+                nombre_doc = f"{nombre} - {mov_personal.fecha_hora.strftime('%d/%m/%Y')}"
+                Documento.objects.create(
+                    nombre=nombre_doc[:255],
+                    archivo=comprobante,
+                    tipo_archivo=ext,
+                    tamano_bytes=comprobante.size,
+                    usuario=request.user,
+                    grupo=grupo_doc,
+                )
         except GrupoMiembro.DoesNotExist:
             messages.error(request, 'El usuario seleccionado no pertenece al grupo.')
         except Exception as e:
@@ -659,41 +732,174 @@ def gastos_compartidos_view(request):
                 id=gasto_id, usuario_acreedor=request.user,
                 grupo_id__in=grupos_ids, pagado=False
             )
-            gasto.pagado = True
-            gasto.save()
-            concepto_nombre = gasto.movimiento.concepto.nombre if gasto.movimiento.concepto else 'sin concepto'
-            Notificacion.objects.create(
-                titulo=f'{request.user.username} marcó como pagado el gasto compartido de ${gasto.monto_pendiente:,} por {concepto_nombre}.'.replace(',', '.'),
-                tipo=Notificacion.TIPO_GASTO_COMPARTIDO,
-                referencia_id=gasto.movimiento_id,
-                usuario=gasto.usuario_deudor,
+            nombre_gasto = gasto.movimiento.nombre if gasto.movimiento else 'Liquidación de deudas'
+            concepto_nombre = (
+                gasto.movimiento.concepto.nombre
+                if gasto.movimiento and gasto.movimiento.concepto
+                else 'sin concepto'
             )
+            with transaction.atomic():
+                gasto.pagado = True
+                gasto.save()
+
+                concepto_cobro, _ = Concepto.objects.get_or_create(
+                    nombre='Cobro de deuda',
+                    usuario=request.user,
+                    defaults={'tipo': Concepto.TIPO_INGRESO, 'activo': True, 'grupo': None},
+                )
+                Movimiento.objects.create(
+                    tipo=Movimiento.TIPO_INGRESO,
+                    nombre=f'Cobro: {nombre_gasto}',
+                    detalle=f'Pago recibido de {gasto.usuario_deudor.username} por "{concepto_nombre}".',
+                    monto=gasto.monto_pendiente,
+                    concepto=concepto_cobro,
+                    usuario=request.user,
+                    grupo=None,
+                    fecha_hora=timezone.now(),
+                )
+
+                concepto_pago, _ = Concepto.objects.get_or_create(
+                    nombre='Pago de deuda',
+                    usuario=gasto.usuario_deudor,
+                    defaults={'tipo': Concepto.TIPO_GASTO, 'activo': True, 'grupo': None},
+                )
+                Movimiento.objects.create(
+                    tipo=Movimiento.TIPO_GASTO,
+                    nombre=f'Pago: {nombre_gasto}',
+                    detalle=f'Pago realizado a {request.user.username} por "{concepto_nombre}".',
+                    monto=gasto.monto_pendiente,
+                    concepto=concepto_pago,
+                    usuario=gasto.usuario_deudor,
+                    grupo=None,
+                    fecha_hora=timezone.now(),
+                )
+
+                Notificacion.objects.create(
+                    titulo=f'{request.user.username} marcó como pagado el gasto compartido de ${gasto.monto_pendiente:,} por {concepto_nombre}.'.replace(',', '.'),
+                    tipo=Notificacion.TIPO_GASTO_COMPARTIDO,
+                    referencia_id=gasto.movimiento_id,
+                    usuario=gasto.usuario_deudor,
+                )
             messages.success(request, 'Gasto marcado como pagado.')
         except GastoCompartido.DoesNotExist:
             messages.error(request, 'No se pudo marcar como pagado.')
         return redirect('finances-shared')
 
-    pendientes_pago = (
+    pendientes_pago = list(
         GastoCompartido.objects
         .filter(usuario_deudor=request.user, grupo_id__in=grupos_ids, pagado=False)
         .select_related('movimiento__concepto', 'usuario_acreedor', 'grupo')
         .order_by('-created_at')
     )
-    pendientes_cobro = (
+    pendientes_cobro = list(
         GastoCompartido.objects
         .filter(usuario_acreedor=request.user, grupo_id__in=grupos_ids, pagado=False)
         .select_related('movimiento__concepto', 'usuario_deudor', 'grupo')
         .order_by('-created_at')
     )
-    total_debo = pendientes_pago.aggregate(t=Sum('monto_pendiente'))['t'] or 0
-    total_me_deben = pendientes_cobro.aggregate(t=Sum('monto_pendiente'))['t'] or 0
+    total_debo = sum(g.monto_pendiente for g in pendientes_pago)
+    total_me_deben = sum(g.monto_pendiente for g in pendientes_cobro)
+
+    usuarios_con_deudas = {}
+    for g in pendientes_pago:
+        uid = str(g.usuario_acreedor_id)
+        if uid not in usuarios_con_deudas:
+            usuarios_con_deudas[uid] = {'id': uid, 'username': g.usuario_acreedor.username, 'debo': 0, 'me_deben': 0, 'count': 0}
+        usuarios_con_deudas[uid]['debo'] += g.monto_pendiente
+        usuarios_con_deudas[uid]['count'] += 1
+    for g in pendientes_cobro:
+        uid = str(g.usuario_deudor_id)
+        if uid not in usuarios_con_deudas:
+            usuarios_con_deudas[uid] = {'id': uid, 'username': g.usuario_deudor.username, 'debo': 0, 'me_deben': 0, 'count': 0}
+        usuarios_con_deudas[uid]['me_deben'] += g.monto_pendiente
+        usuarios_con_deudas[uid]['count'] += 1
+
+    usuarios_liquidables = [u for u in usuarios_con_deudas.values() if u['count'] > 1]
 
     return render(request, 'finances/shared_expenses.html', {
         'pendientes_pago': pendientes_pago,
         'pendientes_cobro': pendientes_cobro,
         'total_debo': total_debo,
         'total_me_deben': total_me_deben,
+        'usuarios_con_deudas_json': json.dumps(usuarios_liquidables),
     })
+
+
+@login_required
+def liquidar_view(request):
+    if request.method != 'POST':
+        return redirect('finances-shared')
+
+    otro_usuario_id = request.POST.get('otro_usuario_id', '').strip()
+    try:
+        otro_usuario = User.objects.get(id=otro_usuario_id)
+    except (User.DoesNotExist, ValueError):
+        messages.error(request, 'Usuario no encontrado.')
+        return redirect('finances-shared')
+
+    grupos_ids = list(_get_grupos_usuario(request.user).values_list('grupo_id', flat=True))
+
+    me_deben_qs = GastoCompartido.objects.filter(
+        usuario_acreedor=request.user, usuario_deudor=otro_usuario,
+        grupo_id__in=grupos_ids, pagado=False,
+    )
+    debo_qs = GastoCompartido.objects.filter(
+        usuario_acreedor=otro_usuario, usuario_deudor=request.user,
+        grupo_id__in=grupos_ids, pagado=False,
+    )
+
+    total_me_deben = me_deben_qs.aggregate(t=Sum('monto_pendiente'))['t'] or 0
+    total_debo = debo_qs.aggregate(t=Sum('monto_pendiente'))['t'] or 0
+
+    if total_me_deben == 0 and total_debo == 0:
+        messages.warning(request, f'No hay deudas pendientes con {otro_usuario.username}.')
+        return redirect('finances-shared')
+
+    neto = total_me_deben - total_debo
+    primer_gasto = me_deben_qs.first() or debo_qs.first()
+    grupo_liquidacion = primer_gasto.grupo
+
+    with transaction.atomic():
+        me_deben_qs.update(pagado=True)
+        debo_qs.update(pagado=True)
+
+        if neto != 0:
+            acreedor = request.user if neto > 0 else otro_usuario
+            deudor = otro_usuario if neto > 0 else request.user
+            monto_neto = abs(neto)
+
+            GastoCompartido.objects.create(
+                movimiento=None,
+                usuario_acreedor=acreedor,
+                usuario_deudor=deudor,
+                monto_pendiente=monto_neto,
+                grupo=grupo_liquidacion,
+            )
+            Notificacion.objects.create(
+                titulo=(
+                    f'{request.user.username} liquidó las deudas contigo. '
+                    f'{"Te debe" if deudor == otro_usuario else "Le debes"} '
+                    f'${monto_neto:,}.'
+                ).replace(',', '.'),
+                tipo=Notificacion.TIPO_GASTO_COMPARTIDO,
+                referencia_id=None,
+                usuario=otro_usuario,
+            )
+        else:
+            Notificacion.objects.create(
+                titulo=f'{request.user.username} liquidó las deudas contigo. ¡Están a mano!',
+                tipo=Notificacion.TIPO_GASTO_COMPARTIDO,
+                referencia_id=None,
+                usuario=otro_usuario,
+            )
+
+    if neto == 0:
+        messages.success(request, f'¡Liquidado! Tú y {otro_usuario.username} quedan a mano.')
+    elif neto > 0:
+        messages.success(request, f'Liquidado. {otro_usuario.username} te debe ${abs(neto):,} neto.'.replace(',', '.'))
+    else:
+        messages.success(request, f'Liquidado. Le debes ${abs(neto):,} neto a {otro_usuario.username}.'.replace(',', '.'))
+    return redirect('finances-shared')
 
 
 @login_required
@@ -1293,4 +1499,78 @@ def savings_group_detail_view(request, group_id, meta_id):
         'completada': ahorrado >= meta.monto_objetivo,
         'es_admin': es_admin,
         'desglose': desglose,
+    })
+
+
+# ── Tarjetas ─────────────────────────────────────────────────────────────────
+
+@login_required
+def tarjetas_view(request):
+    if request.method == 'POST':
+        action = request.POST.get('action')
+
+        if action == 'add':
+            nombre = request.POST.get('nombre', '').strip()
+            tipo = request.POST.get('tipo', '')
+            banco = request.POST.get('banco', '').strip()
+            cupo_total_str = request.POST.get('cupo_total', '').replace('.', '').replace(',', '').strip()
+            cupo_usado_str = request.POST.get('cupo_usado', '').replace('.', '').replace(',', '').strip()
+
+            if not nombre or tipo not in ('Debito', 'Credito') or not banco:
+                messages.error(request, 'Nombre, tipo y banco son obligatorios.')
+            else:
+                cupo_total = int(cupo_total_str) if cupo_total_str.isdigit() and tipo == 'Credito' else None
+                cupo_usado = int(cupo_usado_str) if cupo_usado_str.isdigit() and tipo == 'Credito' else None
+                if cupo_total is not None and cupo_usado is not None and cupo_usado > cupo_total:
+                    messages.error(request, 'El cupo utilizado no puede ser mayor al cupo total.')
+                else:
+                    Tarjeta.objects.create(
+                        nombre=nombre, tipo=tipo, banco=banco,
+                        cupo_total=cupo_total, cupo_usado=cupo_usado,
+                        usuario=request.user,
+                    )
+                    messages.success(request, f'Tarjeta "{nombre}" agregada.')
+
+        elif action == 'delete':
+            tarjeta_id = request.POST.get('tarjeta_id')
+            try:
+                t = Tarjeta.objects.get(id=tarjeta_id, usuario=request.user, activa=True)
+                t.activa = False
+                t.save()
+                messages.success(request, 'Tarjeta eliminada.')
+            except Tarjeta.DoesNotExist:
+                messages.error(request, 'Tarjeta no encontrada.')
+
+        return redirect('finances-tarjetas')
+
+    tarjetas = list(Tarjeta.objects.filter(usuario=request.user, activa=True).order_by('-created_at'))
+    for t in tarjetas:
+        if t.tipo == Tarjeta.TIPO_DEBITO:
+            ingresos = Movimiento.objects.filter(tarjeta=t, tipo=Movimiento.TIPO_INGRESO).aggregate(s=Sum('monto'))['s'] or 0
+            gastos = Movimiento.objects.filter(tarjeta=t, tipo=Movimiento.TIPO_GASTO).aggregate(s=Sum('monto'))['s'] or 0
+            t.saldo_disponible = ingresos - gastos
+        else:
+            t.saldo_disponible = None
+    return render(request, 'finances/tarjetas.html', {
+        'tarjetas': tarjetas,
+        'bancos': BANCOS_CHILE,
+    })
+
+
+@login_required
+def tarjeta_detail_view(request, tarjeta_id):
+    tarjeta = get_object_or_404(Tarjeta, id=tarjeta_id, usuario=request.user, activa=True)
+    movimientos = (
+        Movimiento.objects
+        .filter(tarjeta=tarjeta)
+        .select_related('concepto')
+        .order_by('-fecha_hora')
+    )
+    total_gastos = movimientos.filter(tipo='Gasto').aggregate(t=Sum('monto'))['t'] or 0
+    total_ingresos = movimientos.filter(tipo='Ingreso').aggregate(t=Sum('monto'))['t'] or 0
+    return render(request, 'finances/tarjeta_detail.html', {
+        'tarjeta': tarjeta,
+        'movimientos': movimientos,
+        'total_gastos': total_gastos,
+        'total_ingresos': total_ingresos,
     })

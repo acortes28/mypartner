@@ -3,6 +3,14 @@ from django.conf import settings
 from django.db import models
 from django.db.models import Sum
 
+BANCOS_CHILE = [
+    'Banco de Chile', 'Banco Santander Chile', 'Banco BCI', 'Banco Estado',
+    'Banco Scotiabank Chile', 'Banco Itaú Chile', 'Banco Security',
+    'Banco BICE', 'Banco Consorcio', 'Banco Internacional',
+    'Banco Falabella', 'Banco Ripley', 'Coopeuch',
+    'HSBC Bank Chile', 'Mercado Pago', 'MACH', 'Tenpo', 'Chek',
+]
+
 
 class Concepto(models.Model):
     TIPO_GASTO = 'Gasto'
@@ -88,6 +96,13 @@ class Movimiento(models.Model):
         blank=True,
     )
     fecha_hora = models.DateTimeField()
+    tarjeta = models.ForeignKey(
+        'Tarjeta',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='movimientos',
+    )
+    cuotas = models.PositiveSmallIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -166,7 +181,8 @@ class RegistroPresupuesto(models.Model):
 class GastoCompartido(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     movimiento = models.ForeignKey(
-        Movimiento, on_delete=models.CASCADE, related_name='compartidos'
+        Movimiento, on_delete=models.CASCADE, related_name='compartidos',
+        null=True, blank=True,
     )
     usuario_acreedor = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='gastos_acreedor'
@@ -332,3 +348,32 @@ class AporteAhorro(models.Model):
 
     def __str__(self):
         return f"{self.usuario.username}: ${self.monto:,} → {self.meta.nombre}"
+
+
+class Tarjeta(models.Model):
+    TIPO_DEBITO = 'Debito'
+    TIPO_CREDITO = 'Credito'
+    TIPO_CHOICES = [
+        (TIPO_DEBITO, 'Débito'),
+        (TIPO_CREDITO, 'Crédito'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    nombre = models.CharField(max_length=100)
+    tipo = models.CharField(max_length=10, choices=TIPO_CHOICES)
+    banco = models.CharField(max_length=100)
+    cupo_total = models.PositiveIntegerField(null=True, blank=True)
+    cupo_usado = models.PositiveIntegerField(null=True, blank=True)
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='tarjetas',
+    )
+    activa = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'tarjetas'
+
+    def __str__(self):
+        return f"{self.nombre} — {self.banco} ({self.tipo})"
