@@ -1,9 +1,77 @@
 {% extends 'base.html' %}
 {% load finance_filters %}
-{% block title %}Presupuesto — MyPartner{% endblock %}
+{% block title %}Mi Presupuesto — MyPartner{% endblock %}
 
 {% block content %}
-<div class="px-4 py-6" x-data="{ showAdd: false, editId: null, editMonto: '', periAdd: 'Puntual' }">
+<div class="px-4 py-6" x-data="{
+  showAdd: false,
+  editId: null,
+  editMonto: '',
+  periAdd: 'Puntual',
+  montoAdd: '',
+
+  /* División */
+  showDivision: false,
+  dividirPresupuesto: false,
+  grupoDiv: '',
+  filasDiv: [],
+  get miembrosDisponibles() {
+    if (!this.grupoDiv) return [];
+    const all = (window._miembrosPorGrupo || {})[this.grupoDiv] || [];
+    const used = this.filasDiv.map(f => f.usuario_id);
+    return all.filter(m => !used.includes(m.id));
+  },
+  get ownerMonto() {
+    const total = parseInt(this.montoAdd) || 0;
+    if (!total) return null;
+    const allHaveValues = this.filasDiv.every(f => f.monto !== '' && f.monto !== null && parseInt(f.monto) >= 0);
+    if (!allHaveValues || this.filasDiv.length === 0) return null;
+    const sumOthers = this.filasDiv.reduce((acc, f) => acc + (parseInt(f.monto) || 0), 0);
+    return total - sumOthers;
+  },
+  get ownerPorcentaje() {
+    const om = this.ownerMonto;
+    const total = parseInt(this.montoAdd) || 0;
+    if (om === null || !total) return null;
+    return Math.round(om / total * 10000) / 100;
+  },
+  get divisionValida() {
+    if (!this.grupoDiv || this.filasDiv.length === 0) return false;
+    if (this.filasDiv.some(f => !f.monto || parseInt(f.monto) <= 0)) return false;
+    if (this.ownerMonto === null || this.ownerMonto < 0) return false;
+    return true;
+  },
+  onMontoFila(idx) {
+    const total = parseInt(this.montoAdd) || 0;
+    if (!total) return;
+    const monto = parseInt(this.filasDiv[idx].monto) || 0;
+    this.filasDiv[idx].porcentaje = monto > 0 ? Math.round(monto / total * 10000) / 100 : '';
+    const sumOthers = this.filasDiv.reduce((acc, f) => acc + (parseInt(f.monto) || 0), 0);
+    this.filasDiv.forEach(f => { f.error = sumOthers > total; });
+  },
+  onPorcentajeFila(idx) {
+    const total = parseInt(this.montoAdd) || 0;
+    if (!total) return;
+    const pct = parseFloat(this.filasDiv[idx].porcentaje) || 0;
+    this.filasDiv[idx].monto = pct > 0 ? Math.round(total * pct / 100) : '';
+    const sumOthers = this.filasDiv.reduce((acc, f) => acc + (parseInt(f.monto) || 0), 0);
+    this.filasDiv.forEach(f => { f.error = sumOthers > total; });
+  },
+  agregarUsuario(uid, uname) {
+    this.filasDiv.push({ usuario_id: uid, username: uname, monto: '', porcentaje: '', error: false });
+  },
+  quitarFila(idx) {
+    this.filasDiv.splice(idx, 1);
+    const total = parseInt(this.montoAdd) || 0;
+    const sumOthers = this.filasDiv.reduce((acc, f) => acc + (parseInt(f.monto) || 0), 0);
+    this.filasDiv.forEach(f => { f.error = sumOthers > total; });
+  },
+  onGrupoDivChange() { this.filasDiv = []; },
+  get divisionesJson() {
+    return JSON.stringify(this.filasDiv.map(f => ({ usuario_id: f.usuario_id, monto: parseInt(f.monto) || 0 })));
+  }
+}">
+
   <div class="flex items-center justify-between mb-4">
     <div class="flex items-center gap-3">
       <a href="{% url 'finances-dashboard' %}" class="p-2 text-gray-500 hover:text-gray-700">
@@ -11,7 +79,7 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
         </svg>
       </a>
-      <h1 class="text-xl font-bold text-gray-900">Presupuesto</h1>
+      <h1 class="text-xl font-bold text-gray-900">Mi Presupuesto</h1>
     </div>
     <button @click="showAdd = !showAdd"
             class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold transition-colors">
@@ -38,12 +106,16 @@
     </a>
   </div>
 
-  <!-- Add form -->
+  <!-- Formulario agregar -->
   <div x-show="showAdd" x-transition class="bg-white rounded-2xl shadow-sm p-5 mb-4">
     <h3 class="font-bold text-gray-900 mb-4">Nuevo registro</h3>
-    <form method="post" class="space-y-3">
+    <form id="budget-add-form" method="post" class="space-y-3">
       {% csrf_token %}
       <input type="hidden" name="action" value="add">
+      <input type="hidden" name="dividir_presupuesto" :value="dividirPresupuesto ? '1' : '0'">
+      <input type="hidden" name="grupo_division_id" :value="grupoDiv">
+      <input type="hidden" name="divisiones_json" :value="divisionesJson">
+
       <div class="grid grid-cols-2 gap-3">
         <div>
           <label class="block text-xs font-semibold text-gray-600 mb-1">Tipo *</label>
@@ -68,104 +140,24 @@
                class="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
       </div>
       <div x-data="datepicker()" class="relative" @click.outside="open = false">
-          <label class="block text-xs font-semibold text-gray-600 mb-1">Fecha *</label>
-          <input type="hidden" name="fecha" :value="selectedDate">
-          <button type="button" @click="open = !open"
-                  class="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-white flex items-center justify-between gap-2">
-            <div class="flex items-center gap-2">
-              <svg class="w-4 h-4 text-green-700 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
-              </svg>
-              <span :class="selectedDate ? 'text-gray-900' : 'text-gray-400'"
-                    x-text="selectedDate ? displayDate : 'Seleccionar fecha'"></span>
-            </div>
-            <svg class="w-3.5 h-3.5 text-green-700 transition-transform flex-shrink-0" :class="open ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/>
-            </svg>
-          </button>
-          <!-- Panel -->
-          <div x-show="open" x-cloak
-               x-transition:enter="transition ease-out duration-150"
-               x-transition:enter-start="opacity-0 -translate-y-1"
-               x-transition:enter-end="opacity-100 translate-y-0"
-               class="absolute z-50 top-full mt-1.5 left-0 right-0 bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden">
-            <!-- Header mes -->
-            <div class="bg-green-800 text-white px-4 py-3 flex items-center justify-between">
-              <button type="button" @click.stop="prevMonth()" class="p-1.5 rounded-lg hover:bg-green-700 transition-colors">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7"/></svg>
-              </button>
-              <span class="font-semibold text-sm capitalize" x-text="headerText"></span>
-              <button type="button" @click.stop="nextMonth()" class="p-1.5 rounded-lg hover:bg-green-700 transition-colors">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/></svg>
-              </button>
-            </div>
-            <!-- Días semana -->
-            <div class="grid grid-cols-7 px-3 pt-3 pb-1">
-              <template x-for="n in ['Lu','Ma','Mi','Ju','Vi','Sa','Do']">
-                <div class="text-center text-xs font-bold text-gray-400" x-text="n"></div>
-              </template>
-            </div>
-            <!-- Días -->
-            <div class="grid grid-cols-7 px-3 pb-3 gap-y-1">
-              <template x-for="cell in days" :key="cell.date">
-                <button type="button" @click.stop="select(cell)"
-                        :class="{
-                          'bg-green-800 text-white font-bold rounded-xl': cell.date === selectedDate,
-                          'ring-2 ring-green-500 ring-offset-1 rounded-xl font-semibold text-green-800': cell.date === todayFmt() && cell.date !== selectedDate,
-                          'text-gray-300 cursor-default': !cell.cur,
-                          'text-gray-800 hover:bg-green-50 rounded-xl': cell.cur && cell.date !== selectedDate
-                        }"
-                        class="h-9 w-full flex items-center justify-center text-sm transition-colors">
-                  <span x-text="cell.day"></span>
-                </button>
-              </template>
-            </div>
-          </div>
-      </div>
-      <div class="grid grid-cols-2 gap-3">
-        <div>
-          <label class="block text-xs font-semibold text-gray-600 mb-1">Monto (CLP) *</label>
-          <input type="number" name="monto" min="1" required
-                 class="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
-        </div>
-        <div>
-          <label class="block text-xs font-semibold text-gray-600 mb-1">Periodicidad *</label>
-          <select name="periodicidad" x-model="periAdd" required
-                  class="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-white">
-            <option value="Puntual">Puntual</option>
-            <option value="Mensual">Mensual</option>
-            <option value="Anual">Anual</option>
-          </select>
-        </div>
-      </div>
-      <div x-show="periAdd === 'Mensual' || periAdd === 'Anual'" x-transition
-           x-data="datepicker()" class="relative" @click.outside="open = false">
-        <label class="block text-xs font-semibold text-gray-600 mb-1">Fecha fin (opcional)</label>
-        <input type="hidden" name="fecha_fin" :value="selectedDate">
+        <label class="block text-xs font-semibold text-gray-600 mb-1">Fecha *</label>
+        <input type="hidden" name="fecha" :value="selectedDate">
         <button type="button" @click="open = !open"
                 class="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-white flex items-center justify-between gap-2">
-          <div class="flex items-center gap-2">
-            <svg class="w-4 h-4 text-green-700 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
-            </svg>
-            <span :class="selectedDate ? 'text-gray-900' : 'text-gray-400'"
-                  x-text="selectedDate ? displayDate : 'Sin fecha fin'"></span>
-          </div>
+          <span :class="selectedDate ? 'text-gray-900' : 'text-gray-400'"
+                x-text="selectedDate ? displayDate : 'Seleccionar fecha'"></span>
           <svg class="w-3.5 h-3.5 text-green-700 transition-transform flex-shrink-0" :class="open ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/>
           </svg>
         </button>
         <div x-show="open" x-cloak
-             x-transition:enter="transition ease-out duration-150"
-             x-transition:enter-start="opacity-0 -translate-y-1"
-             x-transition:enter-end="opacity-100 translate-y-0"
              class="absolute z-50 top-full mt-1.5 left-0 right-0 bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden">
           <div class="bg-green-800 text-white px-4 py-3 flex items-center justify-between">
-            <button type="button" @click.stop="prevMonth()" class="p-1.5 rounded-lg hover:bg-green-700 transition-colors">
+            <button type="button" @click.stop="prevMonth()" class="p-1.5 rounded-lg hover:bg-green-700">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7"/></svg>
             </button>
             <span class="font-semibold text-sm capitalize" x-text="headerText"></span>
-            <button type="button" @click.stop="nextMonth()" class="p-1.5 rounded-lg hover:bg-green-700 transition-colors">
+            <button type="button" @click.stop="nextMonth()" class="p-1.5 rounded-lg hover:bg-green-700">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/></svg>
             </button>
           </div>
@@ -189,10 +181,71 @@
             </template>
           </div>
         </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">Monto (CLP) *</label>
+          <input type="text" inputmode="numeric" name="monto" x-model="montoAdd" required
+                 @input="montoAdd = $event.target.value.replace(/[^\d]/g, ''); $event.target.value = montoAdd"
+                 @focus="$el.value = montoAdd || ''"
+                 @blur="$el.value = montoAdd ? parseInt(montoAdd).toLocaleString('es-CL') : ''"
+                 class="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">Periodicidad *</label>
+          <select name="periodicidad" x-model="periAdd" required
+                  class="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-white">
+            <option value="Puntual">Puntual</option>
+            <option value="Mensual">Mensual</option>
+            <option value="Anual">Anual</option>
+          </select>
+        </div>
+      </div>
+      <div x-show="periAdd === 'Mensual' || periAdd === 'Anual'" x-transition
+           x-data="datepicker()" class="relative" @click.outside="open = false">
+        <label class="block text-xs font-semibold text-gray-600 mb-1">Fecha fin (opcional)</label>
+        <input type="hidden" name="fecha_fin" :value="selectedDate">
+        <button type="button" @click="open = !open"
+                class="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm bg-white flex items-center justify-between gap-2">
+          <span :class="selectedDate ? 'text-gray-900' : 'text-gray-400'"
+                x-text="selectedDate ? displayDate : 'Sin fecha fin'"></span>
+          <svg class="w-3.5 h-3.5 text-green-700 transition-transform flex-shrink-0" :class="open ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </button>
+        <div x-show="open" x-cloak
+             class="absolute z-50 top-full mt-1.5 left-0 right-0 bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden">
+          <div class="bg-green-800 text-white px-4 py-3 flex items-center justify-between">
+            <button type="button" @click.stop="prevMonth()" class="p-1.5 rounded-lg hover:bg-green-700"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7"/></svg></button>
+            <span class="font-semibold text-sm capitalize" x-text="headerText"></span>
+            <button type="button" @click.stop="nextMonth()" class="p-1.5 rounded-lg hover:bg-green-700"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/></svg></button>
+          </div>
+          <div class="grid grid-cols-7 px-3 pt-3 pb-1">
+            <template x-for="n in ['Lu','Ma','Mi','Ju','Vi','Sa','Do']"><div class="text-center text-xs font-bold text-gray-400" x-text="n"></div></template>
+          </div>
+          <div class="grid grid-cols-7 px-3 pb-3 gap-y-1">
+            <template x-for="cell in days" :key="cell.date">
+              <button type="button" @click.stop="select(cell)"
+                      :class="{'bg-green-800 text-white font-bold rounded-xl': cell.date === selectedDate, 'text-gray-300 cursor-default': !cell.cur, 'text-gray-800 hover:bg-green-50 rounded-xl': cell.cur && cell.date !== selectedDate}"
+                      class="h-9 w-full flex items-center justify-center text-sm transition-colors">
+                <span x-text="cell.day"></span>
+              </button>
+            </template>
+          </div>
+        </div>
         <p class="text-xs text-gray-400 mt-1">El registro dejará de aparecer a partir del mes siguiente a esta fecha.</p>
       </div>
+
+      {% if tiene_grupos %}
+      <label class="flex items-center gap-2.5 cursor-pointer select-none">
+        <input type="checkbox" x-model="dividirPresupuesto" class="w-4 h-4 accent-blue-600 rounded">
+        <span class="text-sm text-gray-700 font-medium">Dividir presupuesto</span>
+      </label>
+      {% endif %}
+
       <div class="flex gap-2">
-        <button type="submit"
+        <button type="button"
+                @click="dividirPresupuesto ? (showDivision = true) : document.getElementById('budget-add-form').submit()"
                 class="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-sm">
           Guardar
         </button>
@@ -204,7 +257,7 @@
     </form>
   </div>
 
-  <!-- Table -->
+  <!-- Lista de registros -->
   <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
     {% if registros %}
     {% for r in registros %}
@@ -218,11 +271,17 @@
             {% elif r.periodicidad == 'Anual' %}
             <span class="px-1.5 py-0.5 text-[10px] font-bold rounded-md bg-purple-100 text-purple-700">Anual</span>
             {% endif %}
+            {% if r.divisiones.all %}
+            <span class="px-1.5 py-0.5 text-[10px] font-bold rounded-md bg-orange-100 text-orange-700">Dividido</span>
+            {% endif %}
           </div>
           <p class="text-xs text-gray-400">
             {{ r.nombre }} · {{ r.fecha|date:"d/m/Y" }}
             {% if r.fecha_fin %} · <span class="text-orange-500 font-medium">Hasta {{ r.fecha_fin|date:"m/Y" }}</span>{% endif %}
           </p>
+          {% if r.detalle %}
+          <p class="text-xs text-blue-600 font-medium mt-0.5">{{ r.detalle|truncatechars:60 }}</p>
+          {% endif %}
           <span class="text-xs font-semibold {% if r.tipo == 'Gasto' %}text-red-600{% else %}text-green-600{% endif %}">{{ r.tipo }}</span>
         </div>
         <div class="flex items-center gap-3">
@@ -233,20 +292,35 @@
               Modificar
             </button>
             <button type="button"
-                    @click="confirmTitle = 'Eliminar registro'; confirmMessage = '¿Eliminar el registro de {{ r.concepto.nombre }}? Esta acción no se puede deshacer.'; confirmBtnText = 'Eliminar'; confirmFields = {action: 'delete', registro_id: '{{ r.id }}'}; confirmModal = true"
-                    class="px-2.5 py-1 text-xs font-semibold text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors">
+                    @click="confirmTitle = 'Eliminar registro'; confirmMessage = '¿Eliminar el registro de {{ r.concepto.nombre }}?'; confirmBtnText = 'Eliminar'; confirmFields = {action: 'delete', registro_id: '{{ r.id }}'}; confirmModal = true"
+                    class="px-2.5 py-1 text-xs font-semibold text-red-600 border border-red-200 rounded-lg hover:bg-red-50">
               Eliminar
             </button>
           </div>
         </div>
       </div>
-      <!-- Edit inline -->
+      {% if r.divisiones.all %}
+      <div class="px-5 pb-3">
+        <p class="text-xs font-semibold text-gray-500 mb-1.5">División:</p>
+        <div class="space-y-1">
+          {% for d in r.divisiones.all %}
+          <div class="flex justify-between text-xs text-gray-600">
+            <span>{{ d.usuario.username }}</span>
+            <span class="font-semibold">{{ d.monto|clp }} ({{ d.porcentaje }}%)</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
       <div x-show="editId === '{{ r.id }}'" x-transition class="px-5 pb-4">
         <form method="post" class="flex gap-2">
           {% csrf_token %}
           <input type="hidden" name="action" value="modify">
           <input type="hidden" name="registro_id" value="{{ r.id }}">
-          <input type="number" name="monto" x-model="editMonto" min="1" required
+          <input type="text" inputmode="numeric" name="monto" x-model="editMonto" required
+                 @input="editMonto = $event.target.value.replace(/[^\d]/g, ''); $event.target.value = editMonto"
+                 @focus="$el.value = editMonto || ''"
+                 @blur="$el.value = editMonto ? parseInt(editMonto).toLocaleString('es-CL') : ''"
                  class="flex-1 px-3 py-2 rounded-xl border border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
           <button type="submit" class="px-4 py-2 bg-blue-600 text-white font-semibold rounded-xl text-sm">OK</button>
           <button type="button" @click="editId = null" class="px-3 py-2 border border-gray-200 rounded-xl text-sm">✕</button>
@@ -254,7 +328,6 @@
       </div>
     </div>
     {% endfor %}
-    <!-- Total -->
     <div class="flex justify-between items-center px-5 py-4 bg-green-50 border-t border-green-100">
       <p class="font-bold text-green-900">Total presupuesto</p>
       <p class="font-extrabold text-green-800 text-lg">{{ total|clp }}</p>
@@ -264,7 +337,125 @@
     {% endif %}
   </div>
   </div><!-- /budget-swappable -->
+
+  <!-- ═══ MODAL DIVISIÓN ═══ -->
+  <div x-show="showDivision" x-cloak
+       class="fixed inset-0 bg-black/60 z-50 flex items-end justify-center"
+       @click.self="showDivision = false">
+    <div class="bg-white rounded-t-2xl w-full max-w-md p-6 slide-up max-h-[90vh] overflow-y-auto">
+      <div class="flex justify-between items-center mb-5">
+        <h3 class="font-bold text-gray-900 text-lg">Dividir presupuesto</h3>
+        <button @click="showDivision = false" class="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+      </div>
+
+      <div class="space-y-4">
+        <!-- Grupo -->
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Grupo *</label>
+          <select x-model="grupoDiv" @change="onGrupoDivChange()"
+                  class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-white">
+            <option value="">Selecciona un grupo</option>
+            {% for g in grupos_usuario %}
+            <option value="{{ g.id }}">{{ g.nombre }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Grilla -->
+        <div x-show="grupoDiv" class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-gray-100">
+                <th class="text-left py-2 pr-3 text-xs font-semibold text-gray-500">Usuario</th>
+                <th class="text-right py-2 px-2 text-xs font-semibold text-gray-500">Monto</th>
+                <th class="text-right py-2 pl-2 text-xs font-semibold text-gray-500">%</th>
+                <th class="w-6"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- Fila propietario (fija) -->
+              <tr class="border-b border-gray-50">
+                <td class="py-2 pr-3 font-semibold text-gray-700 text-xs">{{ request.user.username }} <span class="text-gray-400 font-normal">(yo)</span></td>
+                <td class="py-2 px-2 text-right">
+                  <span class="text-sm font-bold text-gray-900"
+                        x-text="ownerMonto !== null ? new Intl.NumberFormat('es-CL',{style:'currency',currency:'CLP',maximumFractionDigits:0}).format(ownerMonto) : '—'">
+                  </span>
+                </td>
+                <td class="py-2 pl-2 text-right">
+                  <span class="text-xs text-gray-500"
+                        x-text="ownerPorcentaje !== null ? ownerPorcentaje + '%' : '—'">
+                  </span>
+                </td>
+                <td></td>
+              </tr>
+              <!-- Filas agregadas -->
+              <template x-for="(fila, idx) in filasDiv" :key="fila.usuario_id">
+                <tr class="border-b border-gray-50">
+                  <td class="py-2 pr-3 text-xs text-gray-700" x-text="fila.username"></td>
+                  <td class="py-2 px-2">
+                    <input type="text" inputmode="numeric" x-model="fila.monto"
+                           @input="fila.monto = $event.target.value.replace(/[^\d]/g, ''); $event.target.value = fila.monto; onMontoFila(idx)"
+                           @focus="$el.value = fila.monto || ''"
+                           @blur="$el.value = fila.monto ? parseInt(fila.monto).toLocaleString('es-CL') : ''"
+                           :class="fila.error ? 'border-red-400 ring-1 ring-red-400' : 'border-gray-200'"
+                           class="w-full px-2 py-1.5 rounded-lg border text-right text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  </td>
+                  <td class="py-2 pl-2">
+                    <input type="number" x-model="fila.porcentaje" @input="onPorcentajeFila(idx)" min="0.01" max="100" step="0.01"
+                           class="w-full px-2 py-1.5 rounded-lg border border-gray-200 text-right text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  </td>
+                  <td class="py-2 pl-1">
+                    <button type="button" @click="quitarFila(idx)"
+                            class="text-red-400 hover:text-red-600 text-lg leading-none">✕</button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <template x-if="filasDiv.some(f => f.error)">
+            <p class="text-xs text-red-500 mt-1">⚠ El monto asignado supera el total disponible.</p>
+          </template>
+
+          <!-- Agregar usuario -->
+          <div x-show="miembrosDisponibles.length > 0" class="mt-3">
+            <select id="select-agregar-usuario" class="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">Seleccionar miembro...</option>
+              <template x-for="m in miembrosDisponibles" :key="m.id">
+                <option :value="m.id" x-text="m.username"></option>
+              </template>
+            </select>
+            <button type="button"
+                    @click="
+                      const sel = document.getElementById('select-agregar-usuario');
+                      const uid = sel.value;
+                      const uname = sel.options[sel.selectedIndex].text;
+                      if (uid) { agregarUsuario(uid, uname); sel.value = ''; }
+                    "
+                    class="mt-2 w-full py-2 border border-blue-300 text-blue-700 font-semibold rounded-xl text-sm hover:bg-blue-50 transition-colors">
+              + Agregar usuario
+            </button>
+          </div>
+          <p x-show="grupoDiv && miembrosDisponibles.length === 0 && filasDiv.length === 0"
+             class="text-xs text-yellow-600 mt-2">⚠ El grupo no tiene otros miembros.</p>
+        </div>
+
+        <!-- Botón finalizar -->
+        <button type="button"
+                :disabled="!divisionValida"
+                @click="showDivision = false; $nextTick(() => document.getElementById('budget-add-form').submit())"
+                class="w-full py-3.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold rounded-xl text-sm">
+          Finalizar
+        </button>
+      </div>
+    </div>
+  </div>
+
 </div>
+
+<script>
+  window._miembrosPorGrupo = {{ miembros_por_grupo_json|safe }};
+</script>
+{% endblock %}
 
 {% block extra_scripts %}
 <script>
@@ -299,14 +490,11 @@
         swappable.style.opacity = '1';
       }
     }
-
     document.addEventListener('click', e => {
       const a = e.target.closest('[data-month-nav]');
       if (a) { e.preventDefault(); loadMonth(a.href); }
     });
-
     window.addEventListener('popstate', () => loadMonth(window.location.href));
   })();
 </script>
-{% endblock %}
 {% endblock %}

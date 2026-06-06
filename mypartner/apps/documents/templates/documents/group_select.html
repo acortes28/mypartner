@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% block title %}Documentos — MyPartner{% endblock %}
+
+{% block content %}
+<div class="pb-6">
+  <div class="bg-green-800 text-white px-4 pt-2 pb-6">
+    <div class="flex items-center gap-3 mb-1">
+      <a href="{% url 'main-menu' %}" class="p-1.5 rounded-lg hover:bg-green-700 transition-colors">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+      </a>
+      <div>
+        <p class="text-green-300 text-xs font-semibold uppercase tracking-wide">MyPartner</p>
+        <h1 class="text-xl font-extrabold">Documentos</h1>
+      </div>
+    </div>
+  </div>
+
+  <div class="px-4 pt-4 space-y-3">
+    <p class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Selecciona un grupo</p>
+    {% for m in memberships %}
+    <a href="{% url 'documents-group' m.grupo.id %}"
+       class="flex items-center gap-4 bg-white rounded-2xl px-5 py-4 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+      <div class="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center text-xl flex-shrink-0">📁</div>
+      <div class="flex-1 min-w-0">
+        <p class="font-bold text-gray-900">{{ m.grupo.nombre }}</p>
+        {% if m.grupo.descripcion %}
+        <p class="text-xs text-gray-400 truncate">{{ m.grupo.descripcion }}</p>
+        {% endif %}
+      </div>
+      <svg class="w-4 h-4 text-gray-300 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+      </svg>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

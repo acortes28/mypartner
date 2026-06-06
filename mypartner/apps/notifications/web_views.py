@@ -97,7 +97,12 @@ def mark_read_view(request, notification_id):
     if notif.tipo == Notificacion.TIPO_PRESUPUESTO:
         return redirect('finances-budget')
     if notif.tipo == Notificacion.TIPO_ANUNCIO and notif.referencia_id:
-        return redirect('announcement-detail', announcement_id=notif.referencia_id)
+        from apps.announcements.models import Anuncio
+        try:
+            anuncio = Anuncio.objects.get(id=notif.referencia_id)
+            return redirect('announcement-detail', group_id=anuncio.grupo_id, announcement_id=notif.referencia_id)
+        except Anuncio.DoesNotExist:
+            return redirect('notifications-index')
 
     return redirect('notifications-index')
 

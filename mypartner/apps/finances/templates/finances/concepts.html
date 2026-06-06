@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% block title %}Conceptos — MyPartner{% endblock %}
+{% block title %}Mis Conceptos — MyPartner{% endblock %}
 
 {% block content %}
 <div class="px-4 py-6" x-data="{ showAdd: false, editId: null, editNombre: '' }">
@@ -10,7 +10,7 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
         </svg>
       </a>
-      <h1 class="text-xl font-bold text-gray-900">Conceptos</h1>
+      <h1 class="text-xl font-bold text-gray-900">Mis Conceptos</h1>
     </div>
     <button @click="showAdd = !showAdd"
             class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold">
@@ -38,14 +38,15 @@
         <input type="hidden" name="concepto_id" value="{{ concepto_conflicto.id }}">
         <input type="hidden" name="opcion" value="eliminar_movimientos">
         <button type="button" class="w-full py-2.5 bg-red-600 text-white font-semibold rounded-xl text-xs hover:bg-red-700 transition-colors"
-                @click="confirmTitle = 'Eliminar concepto'; confirmMessage = '¿Eliminar el concepto y todos sus movimientos asociados? Esta acción no se puede deshacer.'; confirmBtnText = 'Eliminar todo'; confirmFields = {action: 'delete', concepto_id: '{{ concepto_conflicto.id }}', opcion: 'eliminar_movimientos'}; confirmModal = true">
+                @click="confirmTitle = 'Eliminar concepto'; confirmMessage = '¿Eliminar el concepto y todos sus movimientos? Esta acción no se puede deshacer.'; confirmBtnText = 'Eliminar todo'; confirmFields = {action: 'delete', concepto_id: '{{ concepto_conflicto.id }}', opcion: 'eliminar_movimientos'}; confirmModal = true">
           Eliminar todo
         </button>
+      </form>
     </div>
   </div>
   {% endif %}
 
-  <!-- Add form -->
+  <!-- Formulario agregar -->
   <div x-show="showAdd" x-transition class="bg-white rounded-2xl shadow-sm p-5 mb-4">
     <form method="post" class="space-y-3">
       {% csrf_token %}
@@ -78,7 +79,7 @@
     </form>
   </div>
 
-  <!-- Concepts list -->
+  <!-- Lista conceptos -->
   <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
     {% if conceptos %}
     {% for c in conceptos %}
@@ -107,7 +108,6 @@
           </form>
         </div>
       </div>
-      <!-- Edit inline -->
       <div x-show="editId === '{{ c.id }}'" x-transition class="px-5 pb-4">
         <form method="post" class="flex gap-2">
           {% csrf_token %}

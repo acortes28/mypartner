@@ -1,0 +1,198 @@
+{% extends 'base.html' %}
+{% load finance_filters %}
+{% block title %}{{ grupo.nombre }} — MyPartner{% endblock %}
+
+{% block content %}
+<div class="pb-8">
+
+  <!-- Header -->
+  <div class="bg-green-800 text-white px-4 pt-2 pb-6">
+    <div class="flex items-center gap-3 mb-3">
+      <a href="{% url 'finances-group-list' %}" class="p-1.5 rounded-lg hover:bg-green-700 transition-colors">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+      </a>
+      <div class="flex-1">
+        <p class="text-green-300 text-xs font-semibold uppercase tracking-wide">Grupo · {{ miembros|length }} miembro{{ miembros|length|pluralize:"s" }}</p>
+        <h1 class="text-xl font-extrabold">{{ grupo.nombre }}</h1>
+      </div>
+      <a href="{% url 'finances-savings-group' grupo.id %}"
+         class="px-3 py-1.5 bg-green-600 hover:bg-green-500 rounded-lg text-xs font-semibold transition-colors flex-shrink-0">
+        🐷 Ahorros
+      </a>
+    </div>
+
+    <!-- KPIs -->
+    <div class="space-y-3">
+      <div class="grid grid-cols-2 gap-3">
+        <div class="bg-green-700/50 rounded-2xl p-4 backdrop-blur-sm">
+          <p class="text-green-300 text-xs font-semibold mb-1">Gasto mes</p>
+          <p class="text-xl font-extrabold text-red-200">{{ gasto_mes|clp }}</p>
+        </div>
+        <div class="bg-green-700/50 rounded-2xl p-4 backdrop-blur-sm">
+          <p class="text-green-300 text-xs font-semibold mb-1">Ingreso mes</p>
+          <p class="text-xl font-extrabold">{{ ingreso_mes|clp }}</p>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div class="bg-green-700/50 rounded-2xl p-4 backdrop-blur-sm">
+          <p class="text-green-300 text-xs font-semibold mb-1">Saldo mes</p>
+          <p class="text-xl font-extrabold {% if saldo_mes < 0 %}text-red-300{% endif %}">{{ saldo_mes|clp }}</p>
+        </div>
+        <div class="bg-green-700/50 rounded-2xl p-4 backdrop-blur-sm">
+          <p class="text-green-300 text-xs font-semibold mb-1">Gasto histórico</p>
+          <p class="text-xl font-extrabold text-red-200">{{ gasto_total|clp }}</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="px-4 pt-4 space-y-4">
+
+    <!-- Miembros -->
+    <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+      <div class="px-5 py-3 bg-gray-50 border-b border-gray-100">
+        <p class="text-xs font-bold text-gray-500 uppercase tracking-wide">Integrantes</p>
+      </div>
+      <div class="flex flex-wrap gap-2 px-5 py-3">
+        {% for m in miembros %}
+        <span class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 rounded-full text-xs font-semibold text-gray-700">
+          <span class="w-2 h-2 rounded-full {% if m.rol == 'admin' %}bg-green-500{% else %}bg-gray-400{% endif %}"></span>
+          {{ m.usuario.username }}
+        </span>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Mis pendientes en este grupo -->
+    {% if total_debo or total_me_deben %}
+    <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+      <div class="px-5 py-3 bg-gray-50 border-b border-gray-100">
+        <p class="text-xs font-bold text-gray-500 uppercase tracking-wide">Gastos compartidos</p>
+      </div>
+      <div class="grid grid-cols-2 divide-x divide-gray-100">
+        <div class="px-5 py-4 text-center">
+          <p class="text-xs text-gray-400 mb-1">Debo</p>
+          <p class="text-lg font-extrabold text-red-600">{{ total_debo|clp }}</p>
+          {% for g in pendientes_pago %}
+          <p class="text-xs text-gray-500 mt-1 leading-tight">
+            A {{ g.usuario_acreedor.username }}: {{ g.monto_pendiente|clp }}
+          </p>
+          {% endfor %}
+        </div>
+        <div class="px-5 py-4 text-center">
+          <p class="text-xs text-gray-400 mb-1">Me deben</p>
+          <p class="text-lg font-extrabold text-green-700">{{ total_me_deben|clp }}</p>
+          {% for g in pendientes_cobro %}
+          <p class="text-xs text-gray-500 mt-1 leading-tight">
+            {{ g.usuario_deudor.username }}: {{ g.monto_pendiente|clp }}
+          </p>
+          {% endfor %}
+        </div>
+      </div>
+      {% if total_debo or total_me_deben %}
+      <div class="px-5 py-3 border-t border-gray-50">
+        <a href="{% url 'finances-shared' %}" class="text-xs font-semibold text-blue-600 hover:underline">
+          Ver todos mis pendientes →
+        </a>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Presupuesto del grupo -->
+    {% if presupuestos %}
+    <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+      <div class="flex items-center justify-between px-5 py-3 bg-gray-50 border-b border-gray-100">
+        <p class="text-xs font-bold text-gray-500 uppercase tracking-wide">Presupuesto compartido</p>
+        <div class="text-right">
+          <span class="text-xs text-red-600 font-semibold">G: {{ total_presupuesto_gasto|clp }}</span>
+          <span class="text-gray-300 mx-1">·</span>
+          <span class="text-xs text-green-700 font-semibold">I: {{ total_presupuesto_ingreso|clp }}</span>
+        </div>
+      </div>
+      {% for p in presupuestos %}
+      <div class="border-b border-gray-50 last:border-0">
+        <div class="flex items-center justify-between px-5 py-3.5">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <p class="text-sm font-semibold text-gray-900 truncate">{{ p.concepto.nombre }}</p>
+              {% if p.periodicidad != 'Puntual' %}
+              <span class="px-1.5 py-0.5 text-[10px] font-bold rounded-md {% if p.periodicidad == 'Mensual' %}bg-blue-100 text-blue-700{% else %}bg-purple-100 text-purple-700{% endif %}">
+                {{ p.periodicidad }}
+              </span>
+              {% endif %}
+            </div>
+            <p class="text-xs text-gray-400">{{ p.nombre }} · {{ p.fecha|date:"d/m/Y" }}</p>
+            {% if p.divisiones.all %}
+            <div class="mt-1.5 flex flex-wrap gap-1">
+              {% for d in p.divisiones.all %}
+              <span class="text-[10px] px-2 py-0.5 rounded-full font-semibold
+                {% if d.usuario == request.user %}bg-green-100 text-green-800{% else %}bg-gray-100 text-gray-600{% endif %}">
+                {{ d.usuario.username }}: {{ d.monto|clp }} ({{ d.porcentaje }}%)
+              </span>
+              {% endfor %}
+            </div>
+            {% endif %}
+          </div>
+          <div class="ml-3 text-right flex-shrink-0">
+            <p class="font-bold text-gray-900">{{ p.monto|clp }}</p>
+            <span class="text-xs font-semibold {% if p.tipo == 'Gasto' %}text-red-500{% else %}text-green-600{% endif %}">
+              {{ p.tipo }}
+            </span>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="bg-white rounded-2xl shadow-sm px-5 py-4 text-center">
+      <p class="text-sm text-gray-400">Sin presupuesto registrado para este grupo</p>
+    </div>
+    {% endif %}
+
+    <!-- Últimos movimientos -->
+    <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+      <div class="px-5 py-3 bg-gray-50 border-b border-gray-100">
+        <p class="text-xs font-bold text-gray-500 uppercase tracking-wide">Últimos movimientos</p>
+      </div>
+      {% if ultimos_movimientos %}
+        {% for m in ultimos_movimientos %}
+        <div class="flex items-center gap-3 px-5 py-3.5 border-b border-gray-50 last:border-0">
+          <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0
+            {% if m.tipo == 'Gasto' %}bg-red-100 text-red-600{% else %}bg-green-100 text-green-600{% endif %}">
+            {% if m.tipo == 'Gasto' %}↑{% else %}↓{% endif %}
+          </div>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-semibold text-gray-900 truncate">{{ m.nombre }}</p>
+            <p class="text-xs text-gray-400">
+              {{ m.concepto.nombre|default:"Sin concepto" }} · @{{ m.usuario.username }}
+            </p>
+            <p class="text-xs text-gray-400">{{ m.fecha_hora|date:"d/m/Y H:i" }}</p>
+          </div>
+          <p class="text-sm font-bold flex-shrink-0 {% if m.tipo == 'Gasto' %}text-red-600{% else %}text-green-600{% endif %}">
+            {% if m.tipo == 'Gasto' %}-{% else %}+{% endif %}{{ m.monto|clp }}
+          </p>
+        </div>
+        {% endfor %}
+      {% else %}
+        <p class="text-center py-8 text-gray-400 text-sm">Sin movimientos en este grupo</p>
+      {% endif %}
+    </div>
+
+    <!-- Info -->
+    <div class="bg-blue-50 border border-blue-100 rounded-2xl px-4 py-3">
+      <p class="text-xs text-blue-700 leading-relaxed">
+        Los movimientos son réplicas de finanzas personales. Registra un gasto o ingreso en tus finanzas personales y selecciona este grupo para replicarlo aquí.
+      </p>
+    </div>
+
+    <a href="{% url 'finances-dashboard' %}"
+       class="block w-full py-3.5 bg-green-700 hover:bg-green-800 text-white font-bold rounded-2xl text-sm text-center transition-colors">
+      Ir a mis finanzas personales
+    </a>
+
+  </div>
+</div>
+{% endblock %}

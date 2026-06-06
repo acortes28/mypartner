@@ -14,9 +14,8 @@
   </div>
 
   <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
-    <!-- Amount header -->
     <div class="{% if movimiento.tipo == 'Gasto' %}bg-red-600{% else %}bg-green-600{% endif %} px-6 py-8 text-white text-center">
-      <p class="text-sm font-semibold opacity-80 mb-1">{{ movimiento.tipo }}</p>
+      <p class="text-sm font-semibold opacity-80 mb-1">{{ movimiento.tipo }} personal</p>
       <p class="text-4xl font-extrabold">
         {% if movimiento.tipo == 'Gasto' %}-{% else %}+{% endif %}{{ movimiento.monto|clp }}
       </p>
@@ -29,7 +28,7 @@
       </div>
       <div class="flex justify-between px-5 py-4">
         <span class="text-sm text-gray-500">Concepto</span>
-        <span class="text-sm font-semibold text-gray-900">{{ movimiento.concepto.nombre|default:"Desconocido" }}</span>
+        <span class="text-sm font-semibold text-gray-900">{{ movimiento.concepto.nombre|default:"Sin concepto" }}</span>
       </div>
       {% if movimiento.detalle %}
       <div class="px-5 py-4">
@@ -38,14 +37,91 @@
       </div>
       {% endif %}
       <div class="flex justify-between px-5 py-4">
-        <span class="text-sm text-gray-500">Usuario</span>
-        <span class="text-sm font-semibold text-gray-900">@{{ movimiento.usuario.username }}</span>
-      </div>
-      <div class="flex justify-between px-5 py-4">
         <span class="text-sm text-gray-500">Fecha y hora</span>
         <span class="text-sm font-semibold text-gray-900">{{ movimiento.fecha_hora|date:"d/m/Y H:i" }}</span>
       </div>
+      {% if movimiento.tipo == 'Gasto' %}
+      <div x-data="{
+        open: false,
+        montoFinal: '',
+        montoOriginal: {{ movimiento.monto }},
+        get diferencia() {
+          const f = parseInt(this.montoFinal) || 0;
+          return f > 0 ? f - this.montoOriginal : null;
+        },
+        fmtCLP(v) {
+          return new Intl.NumberFormat('es-CL', {style: 'currency', currency: 'CLP', maximumFractionDigits: 0}).format(Math.abs(v));
+        }
+      }">
+        <button type="button" @click="open = !open"
+                class="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-orange-50 transition-colors">
+          <span class="text-sm font-semibold text-orange-600">Corregir monto</span>
+          <svg class="w-4 h-4 text-orange-400 transition-transform" :class="open ? 'rotate-180' : ''"
+               fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </button>
+        <div x-show="open" x-transition class="px-5 pb-5 space-y-3 border-t border-orange-100">
+          <p class="text-xs text-gray-500 pt-3">Ingresa el monto real del gasto. Se registrará un movimiento de corrección con la diferencia.</p>
+          <form method="post" action="{% url 'finances-movement-correct' movimiento.id %}" class="space-y-3">
+            {% csrf_token %}
+            <div>
+              <label class="block text-xs font-semibold text-gray-600 mb-1">Monto final (CLP)</label>
+              <input type="text" inputmode="numeric" name="monto_final" x-model="montoFinal"
+                     @input="montoFinal = $event.target.value.replace(/[^\d]/g, ''); $event.target.value = montoFinal"
+                     @focus="$el.value = montoFinal || ''"
+                     @blur="$el.value = montoFinal ? parseInt(montoFinal).toLocaleString('es-CL') : ''"
+                     class="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-orange-400 text-sm">
+            </div>
+            <template x-if="diferencia !== null && diferencia !== 0">
+              <div class="rounded-xl px-4 py-3 text-sm font-semibold flex justify-between"
+                   :class="diferencia > 0 ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'">
+                <span x-text="diferencia > 0 ? 'Gasto adicional a registrar' : 'Reducción a registrar'"></span>
+                <span x-text="(diferencia > 0 ? '+' : '-') + ' ' + fmtCLP(diferencia)"></span>
+              </div>
+            </template>
+            <template x-if="diferencia === 0">
+              <p class="text-xs text-amber-600 font-medium">El monto ingresado es igual al original.</p>
+            </template>
+            <button type="submit"
+                    :disabled="!montoFinal || parseInt(montoFinal) <= 0 || diferencia === 0 || diferencia === null"
+                    class="w-full py-2.5 bg-orange-500 hover:bg-orange-600 disabled:opacity-40 text-white font-bold rounded-xl text-sm transition-colors">
+              Registrar corrección
+            </button>
+          </form>
+        </div>
+      </div>
+      {% endif %}
     </div>
   </div>
+
+  <!-- Réplicas en grupos -->
+  {% if replicas %}
+  <div class="mt-4">
+    <p class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Replicado en grupos</p>
+    <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+      {% for r in replicas %}
+      <a href="{% url 'finances-group' r.grupo.id %}"
+         class="flex items-center justify-between px-5 py-4 border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors">
+        <div>
+          <p class="text-sm font-semibold text-gray-900">{{ r.grupo.nombre }}</p>
+          <p class="text-xs text-gray-400">{{ r.created_at|date:"d/m/Y H:i" }}</p>
+        </div>
+        <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <div class="mt-4 text-center">
+    <p class="text-xs text-gray-400 mb-2">Este movimiento no está replicado en ningún grupo</p>
+    <a href="{% url 'finances-dashboard' %}"
+       class="text-xs font-semibold text-blue-600 hover:underline">
+      Ir al dashboard para registrar en un grupo →
+    </a>
+  </div>
+  {% endif %}
 </div>
 {% endblock %}

@@ -2,25 +2,41 @@ import os
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.shortcuts import render, redirect
+from django.shortcuts import render, redirect, get_object_or_404
 
-from apps.groups.models import GrupoMiembro
+from apps.groups.models import Grupo, GrupoMiembro
 from apps.notifications.models import Notificacion
 from apps.notifications.services import crear_notificaciones_grupo
 from .models import Documento, ALLOWED_EXTENSIONS
 
 
-def _get_grupo(user):
-    m = GrupoMiembro.objects.filter(usuario=user, grupo__activo=True).select_related('grupo').first()
-    return m.grupo if m else None
+def _get_memberships(user):
+    return (
+        GrupoMiembro.objects
+        .filter(usuario=user, grupo__activo=True)
+        .select_related('grupo')
+        .order_by('grupo__nombre')
+    )
 
 
 @login_required
-def documents_view(request):
-    grupo = _get_grupo(request.user)
-    if not grupo:
-        messages.info(request, 'Para acceder a este módulo necesitas pertenecer a un grupo.')
+def documents_select_view(request):
+    """Selector de grupo. Si el usuario solo tiene uno, redirige directamente."""
+    memberships = _get_memberships(request.user)
+    if not memberships.exists():
+        messages.info(request, 'Para acceder a Documentos necesitas pertenecer a un grupo.')
         return redirect('group-manage')
+    if memberships.count() == 1:
+        return redirect('documents-group', group_id=memberships.first().grupo_id)
+    return render(request, 'documents/group_select.html', {'memberships': memberships})
+
+
+@login_required
+def documents_view(request, group_id):
+    grupo = get_object_or_404(Grupo, id=group_id, activo=True)
+    if not GrupoMiembro.objects.filter(usuario=request.user, grupo=grupo).exists():
+        messages.error(request, 'No perteneces a este grupo.')
+        return redirect('documents-index')
 
     if request.method == 'POST':
         action = request.POST.get('action')
@@ -63,10 +79,14 @@ def documents_view(request):
             except Documento.DoesNotExist:
                 messages.error(request, 'Documento no encontrado.')
 
-        return redirect('documents-index')
+        return redirect('documents-group', group_id=group_id)
 
     documentos = (
         Documento.objects.filter(grupo=grupo, activo=True)
         .select_related('usuario').order_by('-created_at')
     )
-    return render(request, 'documents/index.html', {'grupo': grupo, 'documentos': documentos})
+    return render(request, 'documents/index.html', {
+        'grupo': grupo,
+        'documentos': documentos,
+        'multi_grupo': _get_memberships(request.user).count() > 1,
+    })

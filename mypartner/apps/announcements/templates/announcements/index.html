@@ -5,7 +5,8 @@
 <div class="px-4 py-6" x-data="{ showCreate: false }">
   <div class="flex items-center justify-between mb-6">
     <div class="flex items-center gap-3">
-      <a href="{% url 'main-menu' %}" class="p-2 text-gray-500 hover:text-gray-700">
+      <a href="{% if multi_grupo %}{% url 'announcements-index' %}{% else %}{% url 'main-menu' %}{% endif %}"
+         class="p-2 text-gray-500 hover:text-gray-700">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
         </svg>
@@ -21,7 +22,7 @@
     </button>
   </div>
 
-  <!-- Create form -->
+  <!-- Formulario crear -->
   <div x-show="showCreate" x-transition class="bg-white rounded-2xl shadow-sm p-5 mb-4">
     <form method="post" class="space-y-3">
       {% csrf_token %}
@@ -45,7 +46,7 @@
     </form>
   </div>
 
-  <!-- Announcements -->
+  <!-- Lista de anuncios -->
   <div class="space-y-3">
     {% if anuncios %}
     {% for a in anuncios %}
@@ -58,13 +59,13 @@
       </div>
       <p class="text-sm text-gray-600 leading-relaxed line-clamp-3">{{ a.descripcion }}</p>
       <div class="flex gap-2 mt-4">
-        <a href="{% url 'announcement-detail' a.id %}"
+        <a href="{% url 'announcement-detail' grupo.id a.id %}"
            class="flex-1 py-2 text-center text-sm font-semibold text-blue-600 border border-blue-200 rounded-xl hover:bg-blue-50 transition-colors">
           Ver detalle
         </a>
         {% if a.usuario == user %}
         <button type="button"
-                @click="confirmTitle = 'Eliminar anuncio'; confirmMessage = '¿Eliminar el anuncio {{ a.nombre|escapejs }}?'; confirmBtnText = 'Eliminar'; confirmAction = '{% url 'announcement-detail' a.id %}'; confirmFields = {action: 'delete'}; confirmModal = true"
+                @click="confirmTitle = 'Eliminar anuncio'; confirmMessage = '¿Eliminar el anuncio {{ a.nombre|escapejs }}?'; confirmBtnText = 'Eliminar'; confirmAction = '{% url 'announcement-detail' grupo.id a.id %}'; confirmFields = {action: 'delete'}; confirmModal = true"
                 class="px-4 py-2 text-sm font-semibold text-red-600 border border-red-200 rounded-xl hover:bg-red-50 flex-none transition-colors">
           Eliminar
         </button>

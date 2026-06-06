@@ -5,7 +5,8 @@
 <div class="px-4 py-6" x-data="{ showUpload: false }">
   <div class="flex items-center justify-between mb-6">
     <div class="flex items-center gap-3">
-      <a href="{% url 'main-menu' %}" class="p-2 text-gray-500 hover:text-gray-700">
+      <a href="{% if multi_grupo %}{% url 'documents-index' %}{% else %}{% url 'main-menu' %}{% endif %}"
+         class="p-2 text-gray-500 hover:text-gray-700">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
         </svg>
@@ -21,7 +22,7 @@
     </button>
   </div>
 
-  <!-- Upload form -->
+  <!-- Formulario subir -->
   <div x-show="showUpload" x-transition class="bg-white rounded-2xl shadow-sm p-5 mb-4">
     <h3 class="font-bold text-gray-900 mb-4">Subir documento</h3>
     <form method="post" enctype="multipart/form-data" class="space-y-3">
@@ -33,7 +34,9 @@
                class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
       </div>
       <div>
-        <label class="block text-xs font-semibold text-gray-600 mb-1">Archivo * <span class="text-gray-400 font-normal">(pdf, csv, xlsx, png · máx 10MB)</span></label>
+        <label class="block text-xs font-semibold text-gray-600 mb-1">
+          Archivo * <span class="text-gray-400 font-normal">(pdf, csv, xlsx, png · máx 10MB)</span>
+        </label>
         <input type="file" name="archivo" required accept=".pdf,.csv,.xlsx,.png"
                class="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm text-gray-600 file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
       </div>
@@ -52,7 +55,7 @@
     </form>
   </div>
 
-  <!-- Documents list -->
+  <!-- Lista de documentos -->
   <div class="space-y-3">
     {% if documentos %}
     {% for doc in documentos %}
@@ -66,7 +69,9 @@
       </div>
       <div class="flex-1 min-w-0">
         <p class="font-semibold text-gray-900 text-sm truncate">{{ doc.nombre }}</p>
-        {% if doc.descripcion %}<p class="text-xs text-gray-500 mt-0.5 truncate">{{ doc.descripcion }}</p>{% endif %}
+        {% if doc.descripcion %}
+        <p class="text-xs text-gray-500 mt-0.5 truncate">{{ doc.descripcion }}</p>
+        {% endif %}
         <p class="text-xs text-gray-400 mt-1">@{{ doc.usuario.username }} · {{ doc.created_at|date:"d/m/Y" }}</p>
       </div>
       <div class="flex items-center gap-2 flex-shrink-0">

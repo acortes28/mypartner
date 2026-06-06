@@ -1,0 +1,696 @@
+{% extends 'base.html' %}
+{% load finance_filters %}
+{% block title %}Asistente de división — MyPartner{% endblock %}
+
+{% block content %}
+<div x-data="splitAssistant()" class="pb-10">
+
+  <!-- Header fijo -->
+  <div class="bg-green-800 text-white px-4 pt-2 pb-5">
+    <div class="flex items-center gap-3">
+      <a href="{% url 'main-menu' %}" class="p-1.5 rounded-lg hover:bg-green-700 transition-colors">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+      </a>
+      <div>
+        <p class="text-green-300 text-xs font-semibold uppercase tracking-wide">MyPartner</p>
+        <h1 class="text-xl font-extrabold">División de gastos</h1>
+      </div>
+    </div>
+    <!-- Indicador de pasos -->
+    <div class="flex items-center gap-2 mt-4 px-1">
+      <template x-for="n in [1,2,3]" :key="n">
+        <div class="flex items-center gap-2 flex-1">
+          <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors"
+               :class="paso > n ? 'bg-green-400 text-white' : paso === n ? 'bg-white text-green-800' : 'bg-green-700 text-green-300'">
+            <span x-show="paso <= n" x-text="n"></span>
+            <svg x-show="paso > n" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+            </svg>
+          </div>
+          <div x-show="n < 3" class="flex-1 h-0.5 rounded-full transition-colors"
+               :class="paso > n ? 'bg-green-400' : 'bg-green-700'"></div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <div class="px-4 pt-4">
+
+    <!-- ══ PASO 1: Configuración ══ -->
+    <div x-show="paso === 1" x-transition class="space-y-4">
+      <p class="text-xs text-gray-500">Configura la cuenta que vas a dividir.</p>
+
+      <!-- Grupo -->
+      <div class="bg-white rounded-2xl shadow-sm p-5 space-y-4">
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Grupo *</label>
+          <select x-model="grupoId" @change="resetDist()"
+                  class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-600 text-sm bg-white">
+            <option value="">Selecciona un grupo</option>
+            <template x-for="g in grupos" :key="g.id">
+              <option :value="g.id" x-text="g.nombre"></option>
+            </template>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 mb-1.5">Total de la boleta (CLP) *</label>
+          <input type="text" inputmode="numeric" x-model="montoTotal" placeholder="Ej: 48.500"
+                 @input="montoTotal = $event.target.value.replace(/[^\d]/g, ''); $event.target.value = montoTotal"
+                 @focus="$el.value = montoTotal || ''"
+                 @blur="$el.value = montoTotal ? parseInt(montoTotal).toLocaleString('es-CL') : ''"
+                 class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-600 text-sm">
+        </div>
+        <!-- Propina -->
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <label class="text-sm font-semibold text-gray-700">Propina / servicio</label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" x-model="propina" class="w-4 h-4 accent-green-700 rounded">
+              <span class="text-sm text-gray-600" x-text="propina ? 'Sí' : 'No'"></span>
+            </label>
+          </div>
+          <div x-show="propina" x-transition class="flex items-center gap-2">
+            <input type="number" x-model="propinaPct" min="1" max="50"
+                   class="w-24 px-3 py-2 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-600 text-sm text-center">
+            <span class="text-sm text-gray-500">%  →  +<span x-text="fmtCLP(Math.round(parseInt(montoTotal)||0) * propinaPct / 100)"></span></span>
+          </div>
+        </div>
+        <!-- Total con propina -->
+        <div x-show="parseInt(montoTotal) > 0" class="bg-green-50 rounded-xl px-4 py-3 flex justify-between items-center">
+          <span class="text-sm font-semibold text-green-800">Total a dividir</span>
+          <span class="text-lg font-extrabold text-green-800" x-text="fmtCLP(totalConPropina)"></span>
+        </div>
+      </div>
+
+      <!-- Modo -->
+      <div class="bg-white rounded-2xl shadow-sm p-5">
+        <p class="text-sm font-semibold text-gray-700 mb-3">Modo de ingreso</p>
+        <div class="grid grid-cols-2 gap-3">
+          <button type="button" @click="modo = 'monto'"
+                  :class="modo === 'monto' ? 'border-green-600 bg-green-50 text-green-800' : 'border-gray-200 text-gray-600'"
+                  class="flex flex-col items-center gap-1.5 p-4 border-2 rounded-2xl transition-colors">
+            <span class="text-2xl">💸</span>
+            <span class="text-sm font-bold">Por monto</span>
+            <span class="text-[10px] text-gray-400 text-center leading-tight">Cada persona ingresa cuánto consumió</span>
+          </button>
+          <button type="button" @click="modo = 'producto'"
+                  :class="modo === 'producto' ? 'border-green-600 bg-green-50 text-green-800' : 'border-gray-200 text-gray-600'"
+                  class="flex flex-col items-center gap-1.5 p-4 border-2 rounded-2xl transition-colors">
+            <span class="text-2xl">🧾</span>
+            <span class="text-sm font-bold">Por producto</span>
+            <span class="text-[10px] text-gray-400 text-center leading-tight">Ingresa ítems y asígnalos a personas</span>
+          </button>
+        </div>
+      </div>
+
+      <button type="button" @click="irPaso2()"
+              :disabled="!paso1Valido"
+              class="w-full py-3.5 bg-green-700 hover:bg-green-800 disabled:opacity-40 text-white font-bold rounded-2xl text-sm transition-colors">
+        Comenzar →
+      </button>
+    </div>
+
+    <!-- ══ PASO 2A: Por monto ══ -->
+    <div x-show="paso === 2 && modo === 'monto'" x-transition class="space-y-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-xs text-gray-400" x-text="grupoActual?.nombre"></p>
+          <p class="text-sm font-bold text-gray-700">¿Cuánto consumió cada uno?</p>
+        </div>
+        <button type="button" @click="paso = 1" class="text-xs text-gray-400 hover:text-gray-600 font-semibold">← Volver</button>
+      </div>
+
+      <!-- Barra de progreso -->
+      <div class="bg-white rounded-2xl shadow-sm px-5 py-4">
+        <div class="flex justify-between text-xs font-semibold mb-2">
+          <span class="text-gray-500">Asignado</span>
+          <span :class="montoOwner !== null && montoOwner >= 0 ? 'text-green-700' : 'text-red-500'"
+                x-text="fmtCLP(sumaOtros + (montoOwner||0)) + ' / ' + fmtCLP(totalConPropina)"></span>
+        </div>
+        <div class="h-2.5 bg-gray-100 rounded-full overflow-hidden">
+          <div class="h-full rounded-full transition-all duration-300"
+               :class="montoOwner !== null && montoOwner >= 0 ? 'bg-green-500' : 'bg-red-400'"
+               :style="`width:${Math.min(100, Math.round((sumaOtros + (montoOwner||0)) / totalConPropina * 100))}%`">
+          </div>
+        </div>
+      </div>
+
+      <!-- Lista de miembros -->
+      <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+        <template x-for="d in distMonto" :key="d.usuario_id">
+          <div class="flex items-center gap-3 px-5 py-4 border-b border-gray-50 last:border-0">
+            <div class="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
+                 :class="d.esOwner ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'">
+              <span x-text="d.username[0].toUpperCase()"></span>
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-semibold text-gray-900"
+                 x-text="d.username + (d.esOwner ? ' (yo)' : '')"></p>
+            </div>
+            <div class="flex items-center gap-2">
+              <template x-if="d.esOwner">
+                <div class="text-right">
+                  <p class="text-sm font-bold"
+                     :class="montoOwner !== null && montoOwner >= 0 ? 'text-green-700' : 'text-gray-400'"
+                     x-text="montoOwner !== null ? fmtCLP(montoOwner) : '—'"></p>
+                  <p class="text-[10px] text-gray-400">auto-calculado</p>
+                </div>
+              </template>
+              <template x-if="!d.esOwner">
+                <div class="flex items-center gap-1.5">
+                  <button type="button"
+                          @click="d.monto = totalConPropina - sumaOtros + (parseInt(d.monto)||0)"
+                          class="text-[10px] text-blue-500 hover:text-blue-700 font-semibold whitespace-nowrap">
+                    ← resto
+                  </button>
+                  <input type="text" inputmode="numeric" x-model="d.monto" placeholder="0"
+                         @input="d.monto = $event.target.value.replace(/[^\d]/g, ''); $event.target.value = d.monto"
+                         @focus="$el.value = d.monto || ''"
+                         @blur="$el.value = d.monto ? parseInt(d.monto).toLocaleString('es-CL') : ''"
+                         class="w-28 px-3 py-2 rounded-xl border border-gray-200 text-right text-sm focus:outline-none focus:ring-2 focus:ring-green-600">
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Dividir equitativamente -->
+      <button type="button" @click="splitEqual()"
+              class="w-full py-3 border-2 border-green-200 text-green-700 font-bold rounded-2xl text-sm hover:bg-green-50 transition-colors">
+        ⚡ Dividir equitativamente
+      </button>
+
+      <button type="button" @click="paso = 3"
+              :disabled="!paso2Valido"
+              class="w-full py-3.5 bg-green-700 hover:bg-green-800 disabled:opacity-40 text-white font-bold rounded-2xl text-sm transition-colors">
+        Ver resumen →
+      </button>
+    </div>
+
+    <!-- ══ PASO 2B: Por producto ══ -->
+    <div x-show="paso === 2 && modo === 'producto'" x-transition class="space-y-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-xs text-gray-400" x-text="grupoActual?.nombre"></p>
+          <p class="text-sm font-bold text-gray-700">Ítems de la boleta</p>
+        </div>
+        <button type="button" @click="paso = 1" class="text-xs text-gray-400 hover:text-gray-600 font-semibold">← Volver</button>
+      </div>
+
+      <!-- Total calculado de ítems -->
+      <div class="bg-white rounded-2xl shadow-sm px-5 py-3 space-y-1">
+        <div class="flex justify-between items-center">
+          <span class="text-sm text-gray-500">Total ítems ingresados</span>
+          <span class="font-bold" :class="totalItems > 0 ? 'text-gray-900' : 'text-gray-300'"
+                x-text="fmtCLP(totalItems)"></span>
+        </div>
+        <div x-show="items.length > 0" class="text-xs font-medium"
+             :class="totalItems === (parseInt(montoTotal)||0) ? 'text-green-600' : 'text-amber-600'"
+             x-text="totalItems === (parseInt(montoTotal)||0)
+               ? '✓ Coincide con el total de la boleta'
+               : 'Debe coincidir con la boleta: ' + fmtCLP(parseInt(montoTotal)||0)">
+        </div>
+      </div>
+
+      <!-- Lista de ítems -->
+      <div x-show="items.length > 0" class="bg-white rounded-2xl shadow-sm overflow-hidden">
+        <template x-for="item in items" :key="item.id">
+          <div class="px-5 py-4 border-b border-gray-50 last:border-0">
+            <div class="flex items-start justify-between gap-2 mb-2">
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-semibold text-gray-900 truncate" x-text="item.nombre"></p>
+                <p class="text-xs text-gray-400"
+                   x-text="item.cantidad + ' × ' + fmtCLP(item.precio_unitario) + ' = ' + fmtCLP(item.cantidad * item.precio_unitario)"></p>
+              </div>
+              <button type="button" @click="eliminarItem(item.id)"
+                      class="text-red-400 hover:text-red-600 p-1 flex-shrink-0">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+            <!-- Chips de usuarios (solo uno por ítem) -->
+            <div class="flex flex-wrap gap-1.5">
+              <template x-for="m in miembros" :key="m.id">
+                <button type="button" @click="toggleUsuarioItem(item, m.id)"
+                        :class="item.usuarios.includes(m.id)
+                          ? 'bg-green-600 text-white'
+                          : 'bg-gray-100 text-gray-500 hover:bg-gray-200'"
+                        class="px-2.5 py-1 rounded-full text-xs font-semibold transition-colors"
+                        x-text="m.username">
+                </button>
+              </template>
+            </div>
+            <template x-if="item.usuarios.length === 0">
+              <p class="text-[10px] text-red-500 mt-1">⚠ Asigna al menos una persona</p>
+            </template>
+            <template x-if="item.usuarios.length > 1">
+              <p class="text-[10px] text-green-600 mt-1 font-medium"
+                 x-text="'÷ entre ' + item.usuarios.length + ' personas · ' + fmtCLP(Math.floor(item.cantidad * item.precio_unitario / item.usuarios.length)) + ' c/u'">
+              </p>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <!-- Formulario agregar ítem -->
+      <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+        <button type="button" @click="showAddItem = !showAddItem"
+                class="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-gray-50 transition-colors">
+          <span class="font-semibold text-sm text-gray-900">+ Agregar ítem</span>
+          <svg class="w-4 h-4 text-gray-400 transition-transform" :class="showAddItem ? 'rotate-180' : ''"
+               fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </button>
+        <div x-show="showAddItem" x-transition class="px-5 pb-5 border-t border-gray-100 space-y-3 pt-4">
+          <div>
+            <label class="block text-xs font-semibold text-gray-600 mb-1">Producto *</label>
+            <input type="text" x-model="nuevoNombre" placeholder="Ej: Pizza margarita"
+                   class="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-600 text-sm">
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-gray-600 mb-1">Cantidad *</label>
+              <input type="number" x-model="nuevaCantidad" min="1"
+                     class="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-600 text-sm">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-gray-600 mb-1">Precio unitario *</label>
+              <input type="text" inputmode="numeric" x-model="nuevoPrecio" placeholder="$"
+                     @input="nuevoPrecio = $event.target.value.replace(/[^\d]/g, ''); $event.target.value = nuevoPrecio"
+                     @focus="$el.value = nuevoPrecio || ''"
+                     @blur="$el.value = nuevoPrecio ? parseInt(nuevoPrecio).toLocaleString('es-CL') : ''"
+                     class="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-600 text-sm">
+            </div>
+          </div>
+          <!-- Subtotal del nuevo ítem -->
+          <div x-show="nuevaCantidad > 0 && parseInt(nuevoPrecio) > 0"
+               class="text-xs text-gray-500 font-medium">
+            Subtotal: <span class="text-gray-900 font-bold"
+                            x-text="fmtCLP((parseInt(nuevaCantidad)||1) * (parseInt(nuevoPrecio)||0))"></span>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-600 mb-1.5">Asignar a * <span class="text-gray-400 font-normal">(una o más personas)</span></label>
+            <div class="flex flex-wrap gap-1.5">
+              <template x-for="m in miembros" :key="m.id">
+                <button type="button" @click="toggleNuevoUsuario(m.id)"
+                        :class="nuevoUsuarios.includes(m.id)
+                          ? 'bg-green-600 text-white'
+                          : 'bg-gray-100 text-gray-500 hover:bg-gray-200'"
+                        class="px-3 py-1.5 rounded-full text-xs font-semibold transition-colors"
+                        x-text="m.username">
+                </button>
+              </template>
+            </div>
+          </div>
+          <div class="flex gap-2 pt-1">
+            <button type="button" @click="agregarItem()"
+                    :disabled="!nuevoItemValido"
+                    class="flex-1 py-2.5 bg-green-600 hover:bg-green-700 disabled:opacity-40 text-white font-bold rounded-xl text-sm transition-colors">
+              Agregar
+            </button>
+            <button type="button" @click="showAddItem = false; limpiarNuevoItem()"
+                    class="px-4 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-600">
+              Cancelar
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <button type="button" @click="paso = 3"
+              :disabled="!paso2Valido"
+              class="w-full py-3.5 bg-green-700 hover:bg-green-800 disabled:opacity-40 text-white font-bold rounded-2xl text-sm transition-colors">
+        Ver resumen →
+      </button>
+    </div>
+
+    <!-- ══ PASO 3: Resumen ══ -->
+    <div x-show="paso === 3" x-transition class="space-y-4">
+      <div class="flex items-center justify-between">
+        <p class="text-sm font-bold text-gray-700">Resumen de la división</p>
+        <button type="button" @click="paso = 2" class="text-xs text-gray-400 hover:text-gray-600 font-semibold">← Volver</button>
+      </div>
+
+      <!-- Totales -->
+      <div class="bg-white rounded-2xl shadow-sm p-5 space-y-2">
+        <div class="flex justify-between text-sm">
+          <span class="text-gray-500">Subtotal boleta</span>
+          <span class="font-semibold text-gray-900" x-text="fmtCLP(modo === 'monto' ? (parseInt(montoTotal)||0) : totalItems)"></span>
+        </div>
+        <template x-if="propina">
+          <div class="flex justify-between text-sm">
+            <span class="text-gray-500" x-text="'Propina (' + propinaPct + '%)'"></span>
+            <span class="font-semibold text-gray-900"
+                  x-text="'+ ' + fmtCLP(Math.round((modo === 'monto' ? (parseInt(montoTotal)||0) : totalItems) * propinaPct / 100))">
+            </span>
+          </div>
+        </template>
+        <div class="flex justify-between text-sm border-t border-gray-100 pt-2 mt-2">
+          <span class="font-bold text-gray-700">Total final</span>
+          <span class="font-extrabold text-gray-900" x-text="fmtCLP(totalFinal)"></span>
+        </div>
+      </div>
+
+      <!-- ¿Quién pagó? -->
+      <div class="bg-white rounded-2xl shadow-sm p-5">
+        <p class="text-sm font-semibold text-gray-700 mb-3">¿Quién pagó la cuenta?</p>
+        <div class="flex flex-wrap gap-2">
+          <template x-for="m in miembros" :key="m.id">
+            <button type="button" @click="pagadorId = m.id"
+                    :class="pagadorId === m.id
+                      ? 'border-green-600 bg-green-50 text-green-800'
+                      : 'border-gray-200 text-gray-600 hover:border-green-300'"
+                    class="flex items-center gap-2 px-3 py-2 border-2 rounded-xl text-sm font-semibold transition-colors">
+              <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                   :class="pagadorId === m.id ? 'bg-green-200 text-green-800' : 'bg-gray-100 text-gray-600'"
+                   x-text="m.username[0].toUpperCase()"></div>
+              <span x-text="m.id === currentUserId ? m.username + ' (yo)' : m.username"></span>
+              <svg x-show="pagadorId === m.id" class="w-4 h-4 text-green-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
+              </svg>
+            </button>
+          </template>
+        </div>
+      </div>
+
+      <!-- Distribución -->
+      <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+        <div class="px-5 py-3 bg-gray-50 border-b border-gray-100">
+          <p class="text-xs font-bold text-gray-500 uppercase tracking-wide">Distribución del gasto</p>
+        </div>
+        <template x-for="d in distribucionesFinales" :key="d.usuario_id">
+          <div x-show="d.usuario_id === pagadorId || d.monto > 0"
+               class="flex items-center justify-between px-5 py-3.5 border-b border-gray-50 last:border-0"
+               :class="d.usuario_id === pagadorId ? 'bg-green-50' : ''">
+            <div class="flex items-center gap-2">
+              <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold"
+                   :class="d.usuario_id === pagadorId ? 'bg-green-200 text-green-800' : 'bg-gray-100 text-gray-600'"
+                   x-text="d.username[0].toUpperCase()"></div>
+              <div>
+                <p class="text-sm text-gray-700" x-text="d.usuario_id === currentUserId ? d.username + ' (yo)' : d.username"></p>
+                <template x-if="d.usuario_id === pagadorId">
+                  <p class="text-xs text-green-600 font-semibold">pagó la cuenta</p>
+                </template>
+                <template x-if="d.usuario_id !== pagadorId">
+                  <p class="text-xs text-gray-400">debe a <span class="font-medium text-gray-600" x-text="pagador ? pagador.username : '—'"></span></p>
+                </template>
+              </div>
+            </div>
+            <span class="text-sm font-extrabold"
+                  :class="d.usuario_id === pagadorId ? 'text-green-700' : 'text-red-600'"
+                  x-text="fmtCLP(d.monto)"></span>
+          </div>
+        </template>
+      </div>
+
+      <!-- Concepto editable -->
+      <div class="bg-white rounded-2xl shadow-sm p-5">
+        <label class="block text-sm font-semibold text-gray-700 mb-1.5">Concepto</label>
+        <input type="text" x-model="conceptoNombre"
+               class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-green-600 text-sm">
+        <p class="text-xs text-gray-400 mt-1">Se creará si no existe en el grupo.</p>
+      </div>
+
+      <!-- Error -->
+      <template x-if="error">
+        <div class="bg-red-50 border border-red-200 rounded-2xl px-4 py-3">
+          <p class="text-sm text-red-700" x-text="error"></p>
+        </div>
+      </template>
+
+      <button type="button" @click="confirmar()" :disabled="enviando"
+              class="w-full py-3.5 bg-green-700 hover:bg-green-800 disabled:opacity-50 text-white font-bold rounded-2xl text-sm transition-colors flex items-center justify-center gap-2">
+        <template x-if="enviando">
+          <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+          </svg>
+        </template>
+        <span x-text="enviando ? 'Procesando...' : 'Confirmar y asignar pendientes'"></span>
+      </button>
+    </div>
+
+    <!-- ══ PASO 4: Éxito ══ -->
+    <div x-show="paso === 4" x-transition class="space-y-4 text-center pt-6">
+      <div class="text-6xl mb-2">✅</div>
+      <h2 class="text-xl font-extrabold text-gray-900">¡División registrada!</h2>
+      <p class="text-sm text-gray-500">Se crearon los siguientes pendientes de pago:</p>
+
+      <div class="bg-white rounded-2xl shadow-sm overflow-hidden text-left">
+        <template x-for="g in resultado" :key="g.username">
+          <div class="flex items-center justify-between px-5 py-4 border-b border-gray-50 last:border-0">
+            <div class="flex items-center gap-2">
+              <div class="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center text-sm font-bold text-red-600"
+                   x-text="g.username[0].toUpperCase()"></div>
+              <span class="text-sm font-semibold text-gray-900" x-text="g.username"></span>
+              <span class="text-xs text-gray-400">te debe</span>
+            </div>
+            <span class="text-sm font-extrabold text-red-600" x-text="fmtCLP(g.monto)"></span>
+          </div>
+        </template>
+      </div>
+
+      <div class="space-y-3 pt-2">
+        <a href="{% url 'finances-shared' %}"
+           class="block w-full py-3.5 bg-green-700 hover:bg-green-800 text-white font-bold rounded-2xl text-sm transition-colors">
+          Ver mis pendientes
+        </a>
+        <button type="button" @click="resetear()"
+                class="w-full py-3.5 border-2 border-green-200 text-green-700 font-bold rounded-2xl text-sm hover:bg-green-50 transition-colors">
+          Nueva división
+        </button>
+        <a href="{% url 'main-menu' %}"
+           class="block text-sm text-gray-400 hover:text-gray-600 font-medium pt-1">
+          Volver al inicio
+        </a>
+      </div>
+    </div>
+
+  </div><!-- /px-4 -->
+</div><!-- /x-data -->
+
+<script>
+function splitAssistant() {
+  const grupos = {{ grupos_json|safe }};
+  const currentUserId = '{{ current_user_id }}';
+
+  return {
+    paso: 1,
+    enviando: false,
+    resultado: null,
+    error: null,
+
+    // Paso 1
+    grupoId: grupos.length === 1 ? grupos[0].id : '',
+    montoTotal: '',
+    propina: false,
+    propinaPct: 10,
+    modo: 'monto',
+
+    // Paso 2 - monto
+    distMonto: [],
+
+    // Paso 2 - producto
+    items: [],
+    showAddItem: false,
+    nuevoNombre: '',
+    nuevaCantidad: 1,
+    nuevoPrecio: '',
+    nuevoUsuarios: [],
+
+    // Paso 3
+    conceptoNombre: 'División de cuenta',
+    pagadorId: currentUserId,
+
+    // ── Getters ──
+    get grupos() { return grupos; },
+    get currentUserId() { return currentUserId; },
+    get grupoActual() { return grupos.find(g => g.id === this.grupoId) || null; },
+    get miembros() { return this.grupoActual ? this.grupoActual.miembros : []; },
+    get totalConPropina() {
+      const base = parseInt(this.montoTotal) || 0;
+      return this.propina ? Math.round(base * (1 + this.propinaPct / 100)) : base;
+    },
+    get totalItems() {
+      return this.items.reduce((acc, i) => acc + i.cantidad * i.precio_unitario, 0);
+    },
+    get totalItemsConPropina() {
+      return this.propina ? Math.round(this.totalItems * (1 + this.propinaPct / 100)) : this.totalItems;
+    },
+    get totalFinal() {
+      return this.modo === 'monto' ? this.totalConPropina : this.totalItemsConPropina;
+    },
+    get sumaOtros() {
+      return this.distMonto
+        .filter(d => d.usuario_id !== currentUserId)
+        .reduce((acc, d) => acc + (parseInt(d.monto) || 0), 0);
+    },
+    get montoOwner() {
+      const rem = this.totalConPropina - this.sumaOtros;
+      return rem >= 0 ? rem : null;
+    },
+    get nuevoItemValido() {
+      return this.nuevoNombre.trim() &&
+             parseInt(this.nuevoPrecio) > 0 &&
+             parseInt(this.nuevaCantidad) > 0 &&
+             this.nuevoUsuarios.length > 0;
+    },
+    get paso1Valido() {
+      return this.grupoId && parseInt(this.montoTotal) > 0;
+    },
+    get paso2Valido() {
+      if (this.modo === 'monto') {
+        const otros = this.distMonto.filter(d => d.usuario_id !== currentUserId);
+        if (otros.some(d => !(parseInt(d.monto) >= 0))) return false;
+        return this.montoOwner !== null;
+      } else {
+        return this.items.length > 0 &&
+               this.items.every(i => i.usuarios.length > 0) &&
+               this.totalItems === (parseInt(this.montoTotal) || 0);
+      }
+    },
+    get pagador() {
+      return this.miembros.find(m => m.id === this.pagadorId) || null;
+    },
+    get distribucionesFinales() {
+      if (this.modo === 'monto') {
+        return this.distMonto.map(d => ({
+          usuario_id: d.usuario_id,
+          username: d.username,
+          monto: d.usuario_id === currentUserId ? (this.montoOwner || 0) : (parseInt(d.monto) || 0),
+        }));
+      }
+      return this.calcDistProducto();
+    },
+
+    // ── Métodos ──
+    fmtCLP(v) {
+      return new Intl.NumberFormat('es-CL', {style: 'currency', currency: 'CLP', maximumFractionDigits: 0}).format(v || 0);
+    },
+    irPaso2() {
+      if (this.modo === 'monto' && this.distMonto.length === 0) {
+        this.distMonto = [...this.miembros]
+          .map(m => ({usuario_id: m.id, username: m.username, monto: '', esOwner: m.id === currentUserId}))
+          .sort((a, b) => b.esOwner - a.esOwner);
+      }
+      this.paso = 2;
+    },
+    resetDist() {
+      this.distMonto = [];
+      this.items = [];
+      this.pagadorId = currentUserId;
+    },
+    splitEqual() {
+      const n = this.miembros.length;
+      if (!n || !this.totalConPropina) return;
+      const base = Math.floor(this.totalConPropina / n);
+      const residuo = this.totalConPropina - base * n;
+      let primerOtro = true;
+      this.distMonto.forEach(d => {
+        if (d.esOwner) return;
+        d.monto = base + (primerOtro ? residuo : 0);
+        primerOtro = false;
+      });
+    },
+    toggleUsuarioItem(item, uid) {
+      if (item.usuarios.includes(uid)) {
+        item.usuarios = item.usuarios.filter(id => id !== uid);
+      } else {
+        item.usuarios = [...item.usuarios, uid];
+      }
+    },
+    toggleNuevoUsuario(uid) {
+      if (this.nuevoUsuarios.includes(uid)) {
+        this.nuevoUsuarios = this.nuevoUsuarios.filter(id => id !== uid);
+      } else {
+        this.nuevoUsuarios = [...this.nuevoUsuarios, uid];
+      }
+    },
+    agregarItem() {
+      if (!this.nuevoItemValido) return;
+      this.items.push({
+        id: Date.now(),
+        nombre: this.nuevoNombre.trim(),
+        cantidad: parseInt(this.nuevaCantidad),
+        precio_unitario: parseInt(this.nuevoPrecio),
+        usuarios: [...this.nuevoUsuarios],
+      });
+      this.limpiarNuevoItem();
+      this.showAddItem = false;
+    },
+    eliminarItem(id) { this.items = this.items.filter(i => i.id !== id); },
+    limpiarNuevoItem() {
+      this.nuevoNombre = ''; this.nuevaCantidad = 1;
+      this.nuevoPrecio = ''; this.nuevoUsuarios = [];
+    },
+    calcDistProducto() {
+      const dist = {};
+      this.miembros.forEach(m => { dist[m.id] = {usuario_id: m.id, username: m.username, monto: 0}; });
+      this.items.forEach(item => {
+        const total_item = item.cantidad * item.precio_unitario;
+        const n = item.usuarios.length;
+        if (!n) return;
+        const pp = Math.floor(total_item / n);
+        const res = total_item - pp * n;
+        item.usuarios.forEach((uid, idx) => {
+          if (dist[uid]) dist[uid].monto += pp + (idx === 0 ? res : 0);
+        });
+      });
+      if (this.propina && this.propinaPct > 0 && this.totalItems > 0) {
+        const factor = 1 + this.propinaPct / 100;
+        const vals = Object.values(dist);
+        vals.forEach(d => { d.monto = Math.floor(d.monto * factor); });
+        const suma = vals.reduce((acc, d) => acc + d.monto, 0);
+        const diff = this.totalItemsConPropina - suma;
+        if (diff !== 0 && vals.length > 0) vals[0].monto += diff;
+      }
+      return Object.values(dist);
+    },
+    async confirmar() {
+      this.enviando = true;
+      this.error = null;
+      try {
+        const res = await fetch('{% url "finances-split-confirm" %}', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token }}',
+          },
+          body: JSON.stringify({
+            grupo_id: this.grupoId,
+            monto_total: this.totalFinal,
+            concepto_nombre: this.conceptoNombre,
+            distribuciones: this.distribucionesFinales,
+            payer_id: this.pagadorId,
+          }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+          this.resultado = data.gastos;
+          this.paso = 4;
+        } else {
+          this.error = data.error || 'Error al procesar.';
+        }
+      } catch (e) {
+        this.error = 'Error de conexión.';
+      } finally {
+        this.enviando = false;
+      }
+    },
+    resetear() {
+      this.paso = 1;
+      this.grupoId = grupos.length === 1 ? grupos[0].id : '';
+      this.montoTotal = ''; this.propina = false; this.propinaPct = 10; this.modo = 'monto';
+      this.distMonto = []; this.items = [];
+      this.conceptoNombre = 'División de cuenta';
+      this.pagadorId = currentUserId;
+      this.resultado = null; this.error = null;
+    },
+  };
+}
+</script>
+{% endblock %}
