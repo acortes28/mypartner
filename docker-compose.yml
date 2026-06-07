@@ -47,6 +47,14 @@ services:
       db:
         condition: service_healthy
 
+  # flutter_build:
+  #   image: ghcr.io/cirruslabs/flutter:stable
+  #   working_dir: /app
+  #   volumes:
+  #     - ./mypartner_app:/app
+  #   command: flutter build web --release
+  #   profiles: ["build"]
+
 volumes:
   postgres_data:
   media_vol:
