@@ -2,7 +2,9 @@ import csv
 import io
 from datetime import date
 
-from django.db.models import Sum
+from django.contrib.auth import get_user_model
+from django.db import transaction
+from django.db.models import Q, Sum
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import status
@@ -12,18 +14,31 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.groups.models import Grupo, GrupoMiembro
-from apps.groups.permissions import IsGroupMember
+from apps.groups.permissions import IsGroupAdmin, IsGroupMember
 from apps.notifications.models import Notificacion
 from apps.notifications.services import crear_notificaciones_grupo
-from .models import Concepto, GastoCompartido, Movimiento, RegistroPresupuesto, ReplicaGrupal
+from .models import (
+    AporteAhorro, Concepto, DivisionPresupuesto, GastoCompartido,
+    MetaAhorro, Movimiento, RegistroPresupuesto, ReplicaGrupal, Tarjeta,
+)
 from .serializers import (
+    AporteAhorroSerializer,
     ConceptoSerializer,
+    GastoCompartidoSerializer,
+    MetaAhorroCreateSerializer,
+    MetaAhorroSerializer,
     MovimientoCreateSerializer,
     MovimientoSerializer,
+    PresupuestoPersonalCreateSerializer,
     RegistroPresupuestoSerializer,
     RegistroPresupuestoUpdateSerializer,
     ReplicaGrupalSerializer,
+    SplitConfirmInputSerializer,
+    TarjetaCreateSerializer,
+    TarjetaSerializer,
 )
+
+User = get_user_model()
 
 
 def _get_grupo_or_404(group_id):
@@ -289,7 +304,7 @@ class MovimientoPersonalListView(APIView):
         movimientos = (
             Movimiento.objects
             .filter(usuario=request.user, grupo__isnull=True)
-            .select_related('concepto')
+            .select_related('concepto', 'tarjeta')
             .order_by('-fecha_hora')
         )
         concepto_id = request.query_params.get('concepto')
@@ -303,11 +318,98 @@ class MovimientoPersonalListView(APIView):
     def post(self, request):
         serializer = MovimientoCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+
         concepto = serializer.validated_data.get('concepto')
         if concepto and concepto.usuario_id != request.user.pk:
             return Response({'detail': 'El concepto no pertenece al usuario.'}, status=status.HTTP_400_BAD_REQUEST)
-        movimiento = serializer.save(usuario=request.user, grupo=None)
-        return Response(MovimientoSerializer(movimiento).data, status=status.HTTP_201_CREATED)
+
+        tarjeta = serializer.validated_data.get('tarjeta')
+        if tarjeta and tarjeta.usuario_id != request.user.pk:
+            return Response({'detail': 'La tarjeta no pertenece al usuario.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Campos opcionales de replicación (no pasan por el serializer del modelo)
+        registrar_en_grupo = bool(request.data.get('registrar_en_grupo', False))
+        grupo_id = request.data.get('grupo_id')
+        es_compartido = bool(request.data.get('es_compartido', False))
+        usuario_deudor_id = request.data.get('usuario_deudor_id')
+        monto_compartido_raw = request.data.get('monto_compartido')
+
+        grupo = None
+        if registrar_en_grupo and grupo_id:
+            if not GrupoMiembro.objects.filter(
+                usuario=request.user, grupo_id=grupo_id, grupo__activo=True
+            ).exists():
+                return Response({'detail': 'No eres miembro del grupo seleccionado.'}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                grupo = Grupo.objects.get(id=grupo_id, activo=True)
+            except Grupo.DoesNotExist:
+                return Response({'detail': 'Grupo no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+        with transaction.atomic():
+            mov_personal = serializer.save(usuario=request.user, grupo=None)
+
+            if tarjeta and tarjeta.tipo == Tarjeta.TIPO_CREDITO and mov_personal.tipo == Movimiento.TIPO_GASTO:
+                tarjeta.cupo_usado = (tarjeta.cupo_usado or 0) + mov_personal.monto
+                tarjeta.save(update_fields=['cupo_usado'])
+
+            replica_data = None
+            gasto_compartido_data = None
+
+            if grupo:
+                concepto_grupal = None
+                if concepto:
+                    concepto_grupal, _ = Concepto.objects.get_or_create(
+                        grupo=grupo, nombre=concepto.nombre, tipo=concepto.tipo,
+                        defaults={'activo': True, 'usuario': None},
+                    )
+                mov_grupo = Movimiento.objects.create(
+                    tipo=mov_personal.tipo, nombre=mov_personal.nombre,
+                    detalle=mov_personal.detalle, monto=mov_personal.monto,
+                    concepto=concepto_grupal, usuario=request.user,
+                    grupo=grupo, fecha_hora=mov_personal.fecha_hora,
+                )
+                replica = ReplicaGrupal.objects.create(
+                    movimiento_personal=mov_personal,
+                    movimiento_grupo=mov_grupo,
+                    grupo=grupo,
+                )
+                tipo_notif = Notificacion.TIPO_GASTO if mov_personal.tipo == 'Gasto' else Notificacion.TIPO_INGRESO
+                concepto_nombre = concepto_grupal.nombre if concepto_grupal else 'sin concepto'
+                titulo = (
+                    f'Se {"generó un gasto" if mov_personal.tipo == "Gasto" else "registró un ingreso"} '
+                    f'por ${mov_personal.monto:,} de {request.user.username} por {concepto_nombre}'
+                ).replace(',', '.')
+                crear_notificaciones_grupo(grupo, tipo_notif, titulo, referencia_id=mov_grupo.id, excluir_usuario=request.user)
+                replica_data = ReplicaGrupalSerializer(replica).data
+
+                if es_compartido and mov_personal.tipo == 'Gasto' and usuario_deudor_id:
+                    try:
+                        monto_pendiente = int(monto_compartido_raw) if monto_compartido_raw else mov_personal.monto
+                        monto_pendiente = max(1, min(monto_pendiente, mov_personal.monto - 1))
+                        miembro = GrupoMiembro.objects.select_related('usuario').get(
+                            usuario_id=usuario_deudor_id, grupo=grupo
+                        )
+                        gc = GastoCompartido.objects.create(
+                            movimiento=mov_grupo,
+                            usuario_acreedor=request.user,
+                            usuario_deudor=miembro.usuario,
+                            monto_pendiente=monto_pendiente,
+                            grupo=grupo,
+                        )
+                        Notificacion.objects.create(
+                            titulo=f'{request.user.username} te compartió un gasto de ${monto_pendiente:,} por {concepto_nombre}.'.replace(',', '.'),
+                            tipo=Notificacion.TIPO_GASTO_COMPARTIDO,
+                            referencia_id=mov_grupo.id,
+                            usuario=miembro.usuario,
+                        )
+                        gasto_compartido_data = {'id': str(gc.id), 'monto_pendiente': gc.monto_pendiente}
+                    except GrupoMiembro.DoesNotExist:
+                        pass
+
+        response_data = MovimientoSerializer(mov_personal).data
+        response_data['replica'] = replica_data
+        response_data['gasto_compartido'] = gasto_compartido_data
+        return Response(response_data, status=status.HTTP_201_CREATED)
 
 
 class MovimientoPersonalDetailView(APIView):
@@ -455,3 +557,932 @@ class FinanciasDashboardPersonalView(APIView):
             'grafico_torta': grafico,
             'ultimos_movimientos': MovimientoSerializer(ultimos, many=True).data,
         })
+
+
+# ── Conceptos personales ────────────────────────────────────────────────────
+
+class ConceptoPersonalListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        conceptos = Concepto.objects.filter(
+            usuario=request.user, grupo__isnull=True, activo=True
+        ).order_by('tipo', 'nombre')
+        tipo = request.query_params.get('tipo')
+        if tipo:
+            conceptos = conceptos.filter(tipo=tipo)
+        return Response(ConceptoSerializer(conceptos, many=True).data)
+
+    def post(self, request):
+        serializer = ConceptoSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        nombre = serializer.validated_data['nombre']
+        if Concepto.objects.filter(usuario=request.user, nombre__iexact=nombre, activo=True, grupo__isnull=True).exists():
+            return Response({'detail': f'Ya existe un concepto llamado "{nombre}".'}, status=status.HTTP_409_CONFLICT)
+        concepto = serializer.save(usuario=request.user, grupo=None)
+        return Response(ConceptoSerializer(concepto).data, status=status.HTTP_201_CREATED)
+
+
+class ConceptoPersonalDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, concept_id):
+        try:
+            concepto = Concepto.objects.get(id=concept_id, usuario=request.user, activo=True, grupo__isnull=True)
+        except Concepto.DoesNotExist:
+            return Response({'detail': 'Concepto no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+        nombre = request.data.get('nombre', concepto.nombre).strip()
+        if Concepto.objects.filter(
+            usuario=request.user, nombre__iexact=nombre, activo=True, grupo__isnull=True
+        ).exclude(id=concept_id).exists():
+            return Response({'detail': f'Ya existe un concepto llamado "{nombre}".'}, status=status.HTTP_409_CONFLICT)
+        serializer = ConceptoSerializer(concepto, data={'nombre': nombre, 'tipo': concepto.tipo})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def delete(self, request, concept_id):
+        try:
+            concepto = Concepto.objects.get(id=concept_id, usuario=request.user, activo=True, grupo__isnull=True)
+        except Concepto.DoesNotExist:
+            return Response({'detail': 'Concepto no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+        if Movimiento.objects.filter(concepto=concepto).exists():
+            return Response(
+                {'detail': 'Este concepto tiene movimientos asociados.', 'tiene_movimientos': True, 'concepto_id': str(concepto.id)},
+                status=status.HTTP_409_CONFLICT,
+            )
+        concepto.activo = False
+        concepto.save()
+        return Response({'detail': 'Concepto eliminado.'})
+
+
+class ConceptoPersonalDeleteWithMovementsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, concept_id):
+        accion = request.data.get('accion')
+        if accion not in ('eliminar_movimientos', 'mantener_movimientos'):
+            return Response({'detail': 'Acción inválida.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            concepto = Concepto.objects.get(id=concept_id, usuario=request.user, activo=True, grupo__isnull=True)
+        except Concepto.DoesNotExist:
+            return Response({'detail': 'Concepto no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+        if accion == 'eliminar_movimientos':
+            Movimiento.objects.filter(concepto=concepto).delete()
+        else:
+            Movimiento.objects.filter(concepto=concepto).update(concepto=None)
+        concepto.activo = False
+        concepto.save()
+        return Response({'detail': 'Concepto eliminado.'})
+
+
+# ── Corrección de movimiento personal ──────────────────────────────────────
+
+class MovimientoPersonalCorrectView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, movement_id):
+        try:
+            mov = Movimiento.objects.get(
+                id=movement_id, usuario=request.user,
+                grupo__isnull=True, tipo=Movimiento.TIPO_GASTO,
+            )
+        except Movimiento.DoesNotExist:
+            return Response({'detail': 'Movimiento no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+        monto_final_raw = str(request.data.get('monto_final', '0')).replace('.', '').replace(',', '')
+        try:
+            monto_final = int(monto_final_raw)
+            assert monto_final > 0
+        except (ValueError, AssertionError):
+            return Response({'detail': 'Monto inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        diferencia = monto_final - mov.monto
+        if diferencia == 0:
+            return Response({'detail': 'El monto es igual al original.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        tipo_correccion = Movimiento.TIPO_GASTO if diferencia > 0 else Movimiento.TIPO_INGRESO
+        monto_correccion = abs(diferencia)
+        monto_original = mov.monto
+
+        with transaction.atomic():
+            correccion = Movimiento.objects.create(
+                tipo=tipo_correccion,
+                nombre='Corrección de gasto',
+                detalle=f'Corrección de «{mov.nombre}»: ${monto_original:,} → ${monto_final:,}'.replace(',', '.'),
+                monto=monto_correccion,
+                concepto=None,
+                usuario=request.user,
+                grupo=None,
+                fecha_hora=timezone.now(),
+            )
+            replicas = ReplicaGrupal.objects.filter(movimiento_personal=mov).select_related('movimiento_grupo')
+            for replica in replicas:
+                mov_grupo = replica.movimiento_grupo
+                compartidos = GastoCompartido.objects.filter(movimiento=mov_grupo, pagado=False).select_related('usuario_deudor')
+                for gc in compartidos:
+                    monto_anterior = gc.monto_pendiente
+                    nuevo_monto = max(1, round(monto_anterior * monto_final / monto_original))
+                    gc.monto_pendiente = nuevo_monto
+                    gc.save()
+                    Notificacion.objects.create(
+                        titulo=(
+                            f'{request.user.username} corrigió el gasto «{mov.nombre}»: '
+                            f'tu deuda cambió de ${monto_anterior:,} a ${nuevo_monto:,}.'
+                        ).replace(',', '.'),
+                        tipo=Notificacion.TIPO_GASTO_COMPARTIDO,
+                        referencia_id=mov_grupo.id,
+                        usuario=gc.usuario_deudor,
+                    )
+                mov_grupo.monto = monto_final
+                mov_grupo.save()
+
+        signo = '+' if diferencia > 0 else '-'
+        return Response({
+            'detail': f'Corrección registrada: {signo}${monto_correccion:,} como {tipo_correccion.lower()}.'.replace(',', '.'),
+            'correccion': MovimientoSerializer(correccion).data,
+        })
+
+
+# ── Presupuesto personal ────────────────────────────────────────────────────
+
+class PresupuestoPersonalListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        hoy = date.today()
+        mes_raw = request.query_params.get('mes', hoy.strftime('%Y-%m'))
+        try:
+            anio_str, mes_str = mes_raw.split('-')
+            anio, mes = int(anio_str), int(mes_str)
+        except (ValueError, AttributeError):
+            anio, mes = hoy.year, hoy.month
+
+        base_qs = (
+            RegistroPresupuesto.objects
+            .filter(usuario=request.user, grupo__isnull=True)
+            .filter(
+                Q(periodicidad='Mensual', fecha__year__lt=anio) |
+                Q(periodicidad='Mensual', fecha__year=anio, fecha__month__lte=mes) |
+                Q(periodicidad='Anual', fecha__month=mes, fecha__year__lte=anio) |
+                Q(periodicidad='Puntual', fecha__year=anio, fecha__month=mes)
+            )
+            .filter(
+                Q(fecha_fin__isnull=True) |
+                Q(fecha_fin__year__gt=anio) |
+                Q(fecha_fin__year=anio, fecha_fin__month__gte=mes)
+            )
+            .select_related('concepto')
+            .prefetch_related('divisiones__usuario')
+            .order_by('-tipo', '-monto')
+        )
+        ingresos = base_qs.filter(tipo='Ingreso').aggregate(t=Sum('monto'))['t'] or 0
+        gastos = base_qs.filter(tipo='Gasto').aggregate(t=Sum('monto'))['t'] or 0
+        return Response({
+            'registros': RegistroPresupuestoSerializer(base_qs, many=True).data,
+            'total': ingresos - gastos,
+            'total_ingresos': ingresos,
+            'total_gastos': gastos,
+        })
+
+    def post(self, request):
+        serializer = PresupuestoPersonalCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        concepto = data['concepto']
+        if concepto.usuario_id != request.user.pk:
+            return Response({'detail': 'El concepto no pertenece al usuario.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        dividir = data.get('dividir_presupuesto', False)
+        grupo_division_id = data.get('grupo_division_id')
+        divisiones_input = data.get('divisiones', [])
+
+        campos_base = dict(
+            tipo=data['tipo'],
+            nombre=data['nombre'],
+            detalle=data.get('detalle', ''),
+            fecha=data['fecha'],
+            periodicidad=data.get('periodicidad', 'Puntual'),
+            fecha_fin=data.get('fecha_fin'),
+        )
+        monto = data['monto']
+
+        if dividir and grupo_division_id:
+            if not GrupoMiembro.objects.filter(
+                usuario=request.user, grupo_id=grupo_division_id, grupo__activo=True
+            ).exists():
+                return Response({'detail': 'No eres miembro del grupo seleccionado.'}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                grupo_div = Grupo.objects.get(id=grupo_division_id, activo=True)
+            except Grupo.DoesNotExist:
+                return Response({'detail': 'Grupo no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+            otros_total = sum(int(d['monto']) for d in divisiones_input)
+            monto_propietario = monto - otros_total
+            if monto_propietario < 0:
+                return Response({'detail': 'La suma de montos supera el total del presupuesto.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            usuarios_div = []
+            for d in divisiones_input:
+                try:
+                    user_div = User.objects.get(id=d['usuario_id'])
+                except User.DoesNotExist:
+                    return Response({'detail': f'Usuario {d["usuario_id"]} no encontrado.'}, status=status.HTTP_400_BAD_REQUEST)
+                if not GrupoMiembro.objects.filter(usuario=user_div, grupo=grupo_div, grupo__activo=True).exists():
+                    return Response({'detail': f'{user_div.username} no es miembro del grupo.'}, status=status.HTTP_400_BAD_REQUEST)
+                usuarios_div.append((user_div, int(d['monto'])))
+
+            with transaction.atomic():
+                detalle_ref = f'Grupo: {grupo_div.nombre} · Total: ${monto:,}'.replace(',', '.')
+                detalle_texto = data.get('detalle', '')
+                detalle_full = f'{detalle_ref}\n{detalle_texto}'.strip() if detalle_texto else detalle_ref
+
+                concepto_grupo, _ = Concepto.objects.get_or_create(
+                    grupo=grupo_div, nombre=concepto.nombre, tipo=data['tipo'],
+                    defaults={'activo': True, 'usuario': None},
+                )
+                registro_grupo = RegistroPresupuesto.objects.create(
+                    **campos_base, concepto=concepto_grupo,
+                    detalle=detalle_full, monto=monto,
+                    usuario=None, grupo=grupo_div,
+                )
+                RegistroPresupuesto.objects.create(
+                    **campos_base, concepto=concepto,
+                    detalle=detalle_full, monto=monto_propietario,
+                    usuario=request.user, grupo=None,
+                )
+                divisiones_objs = [
+                    DivisionPresupuesto(
+                        registro_presupuesto=registro_grupo,
+                        grupo=grupo_div, usuario=request.user,
+                        monto=monto_propietario,
+                    )
+                ]
+                for user_div, monto_div in usuarios_div:
+                    concepto_div, _ = Concepto.objects.get_or_create(
+                        usuario=user_div, nombre=concepto.nombre, tipo=data['tipo'],
+                        defaults={'activo': True, 'grupo': None},
+                    )
+                    RegistroPresupuesto.objects.create(
+                        **campos_base, concepto=concepto_div,
+                        detalle=detalle_full, monto=monto_div,
+                        usuario=user_div, grupo=None,
+                    )
+                    divisiones_objs.append(DivisionPresupuesto(
+                        registro_presupuesto=registro_grupo,
+                        grupo=grupo_div, usuario=user_div,
+                        monto=monto_div,
+                    ))
+                    Notificacion.objects.create(
+                        titulo=(
+                            f'{request.user.username} te asignó '
+                            f'${monto_div:,} del presupuesto "{data["nombre"]}" '
+                            f'en {grupo_div.nombre}'
+                        ).replace(',', '.'),
+                        tipo=Notificacion.TIPO_PRESUPUESTO,
+                        referencia_id=registro_grupo.id,
+                        usuario=user_div,
+                    )
+                DivisionPresupuesto.objects.bulk_create(divisiones_objs)
+
+            return Response(RegistroPresupuestoSerializer(registro_grupo).data, status=status.HTTP_201_CREATED)
+
+        registro = RegistroPresupuesto.objects.create(
+            **campos_base, concepto=concepto,
+            detalle=data.get('detalle', ''), monto=monto,
+            usuario=request.user, grupo=None,
+        )
+        return Response(RegistroPresupuestoSerializer(registro).data, status=status.HTTP_201_CREATED)
+
+
+class PresupuestoPersonalDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, budget_id):
+        try:
+            registro = RegistroPresupuesto.objects.get(id=budget_id, usuario=request.user, grupo__isnull=True)
+        except RegistroPresupuesto.DoesNotExist:
+            return Response({'detail': 'Registro no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = RegistroPresupuestoUpdateSerializer(registro, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(RegistroPresupuestoSerializer(registro).data)
+
+    def delete(self, request, budget_id):
+        try:
+            registro = RegistroPresupuesto.objects.get(id=budget_id, usuario=request.user, grupo__isnull=True)
+        except RegistroPresupuesto.DoesNotExist:
+            return Response({'detail': 'Registro no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+        registro.delete()
+        return Response({'detail': 'Registro de presupuesto eliminado.'})
+
+
+# ── Gastos compartidos ──────────────────────────────────────────────────────
+
+class GastoCompartidoListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        grupos_ids = (
+            GrupoMiembro.objects
+            .filter(usuario=request.user, grupo__activo=True)
+            .values_list('grupo_id', flat=True)
+        )
+        pendientes_pago = list(
+            GastoCompartido.objects
+            .filter(usuario_deudor=request.user, grupo_id__in=grupos_ids, pagado=False)
+            .select_related('movimiento__concepto', 'usuario_acreedor', 'grupo')
+            .order_by('-created_at')
+        )
+        pendientes_cobro = list(
+            GastoCompartido.objects
+            .filter(usuario_acreedor=request.user, grupo_id__in=grupos_ids, pagado=False)
+            .select_related('movimiento__concepto', 'usuario_deudor', 'grupo')
+            .order_by('-created_at')
+        )
+        total_debo = sum(g.monto_pendiente for g in pendientes_pago)
+        total_me_deben = sum(g.monto_pendiente for g in pendientes_cobro)
+
+        usuarios_con_deudas: dict = {}
+        for g in pendientes_pago:
+            uid = str(g.usuario_acreedor_id)
+            usuarios_con_deudas.setdefault(uid, {'id': uid, 'username': g.usuario_acreedor.username, 'debo': 0, 'me_deben': 0})
+            usuarios_con_deudas[uid]['debo'] += g.monto_pendiente
+        for g in pendientes_cobro:
+            uid = str(g.usuario_deudor_id)
+            usuarios_con_deudas.setdefault(uid, {'id': uid, 'username': g.usuario_deudor.username, 'debo': 0, 'me_deben': 0})
+            usuarios_con_deudas[uid]['me_deben'] += g.monto_pendiente
+
+        return Response({
+            'pendientes_pago': GastoCompartidoSerializer(pendientes_pago, many=True).data,
+            'pendientes_cobro': GastoCompartidoSerializer(pendientes_cobro, many=True).data,
+            'total_debo': total_debo,
+            'total_me_deben': total_me_deben,
+            'usuarios_con_deudas': list(usuarios_con_deudas.values()),
+        })
+
+
+class MarcarGastoPagadoView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, gasto_id):
+        grupos_ids = GrupoMiembro.objects.filter(
+            usuario=request.user, grupo__activo=True
+        ).values_list('grupo_id', flat=True)
+        try:
+            gasto = GastoCompartido.objects.select_related(
+                'movimiento__concepto', 'usuario_deudor', 'grupo'
+            ).get(id=gasto_id, usuario_acreedor=request.user, grupo_id__in=grupos_ids, pagado=False)
+        except GastoCompartido.DoesNotExist:
+            return Response({'detail': 'Gasto compartido no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+        nombre_gasto = gasto.movimiento.nombre if gasto.movimiento else 'Liquidación de deudas'
+        concepto_nombre = (
+            gasto.movimiento.concepto.nombre
+            if gasto.movimiento and gasto.movimiento.concepto
+            else 'sin concepto'
+        )
+
+        with transaction.atomic():
+            gasto.pagado = True
+            gasto.save()
+
+            concepto_cobro, _ = Concepto.objects.get_or_create(
+                nombre='Cobro de deuda', usuario=request.user,
+                defaults={'tipo': Concepto.TIPO_INGRESO, 'activo': True, 'grupo': None},
+            )
+            Movimiento.objects.create(
+                tipo=Movimiento.TIPO_INGRESO,
+                nombre=f'Cobro: {nombre_gasto}',
+                detalle=f'Pago recibido de {gasto.usuario_deudor.username} por "{concepto_nombre}".',
+                monto=gasto.monto_pendiente,
+                concepto=concepto_cobro,
+                usuario=request.user,
+                grupo=None,
+                fecha_hora=timezone.now(),
+            )
+            concepto_pago, _ = Concepto.objects.get_or_create(
+                nombre='Pago de deuda', usuario=gasto.usuario_deudor,
+                defaults={'tipo': Concepto.TIPO_GASTO, 'activo': True, 'grupo': None},
+            )
+            Movimiento.objects.create(
+                tipo=Movimiento.TIPO_GASTO,
+                nombre=f'Pago: {nombre_gasto}',
+                detalle=f'Pago realizado a {request.user.username} por "{concepto_nombre}".',
+                monto=gasto.monto_pendiente,
+                concepto=concepto_pago,
+                usuario=gasto.usuario_deudor,
+                grupo=None,
+                fecha_hora=timezone.now(),
+            )
+            Notificacion.objects.create(
+                titulo=f'{request.user.username} marcó como pagado el gasto compartido de ${gasto.monto_pendiente:,} por {concepto_nombre}.'.replace(',', '.'),
+                tipo=Notificacion.TIPO_GASTO_COMPARTIDO,
+                referencia_id=gasto.movimiento_id,
+                usuario=gasto.usuario_deudor,
+            )
+
+        return Response({'detail': 'Gasto marcado como pagado.'})
+
+
+class LiquidarView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        otro_usuario_id = request.data.get('otro_usuario_id')
+        if not otro_usuario_id:
+            return Response({'detail': 'otro_usuario_id es requerido.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            otro_usuario = User.objects.get(id=otro_usuario_id)
+        except User.DoesNotExist:
+            return Response({'detail': 'Usuario no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+        grupos_ids = list(
+            GrupoMiembro.objects.filter(usuario=request.user, grupo__activo=True).values_list('grupo_id', flat=True)
+        )
+        me_deben_qs = GastoCompartido.objects.filter(
+            usuario_acreedor=request.user, usuario_deudor=otro_usuario,
+            grupo_id__in=grupos_ids, pagado=False,
+        )
+        debo_qs = GastoCompartido.objects.filter(
+            usuario_acreedor=otro_usuario, usuario_deudor=request.user,
+            grupo_id__in=grupos_ids, pagado=False,
+        )
+        total_me_deben = me_deben_qs.aggregate(t=Sum('monto_pendiente'))['t'] or 0
+        total_debo = debo_qs.aggregate(t=Sum('monto_pendiente'))['t'] or 0
+
+        if total_me_deben == 0 and total_debo == 0:
+            return Response({'detail': f'No hay deudas pendientes con {otro_usuario.username}.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        neto = total_me_deben - total_debo
+        primer_gasto = me_deben_qs.first() or debo_qs.first()
+        grupo_liquidacion = primer_gasto.grupo
+
+        with transaction.atomic():
+            me_deben_qs.update(pagado=True)
+            debo_qs.update(pagado=True)
+
+            if neto != 0:
+                acreedor = request.user if neto > 0 else otro_usuario
+                deudor = otro_usuario if neto > 0 else request.user
+                monto_neto = abs(neto)
+                GastoCompartido.objects.create(
+                    movimiento=None,
+                    usuario_acreedor=acreedor,
+                    usuario_deudor=deudor,
+                    monto_pendiente=monto_neto,
+                    grupo=grupo_liquidacion,
+                )
+                Notificacion.objects.create(
+                    titulo=(
+                        f'{request.user.username} liquidó las deudas contigo. '
+                        f'{"Te debe" if deudor == otro_usuario else "Le debes"} '
+                        f'${monto_neto:,}.'
+                    ).replace(',', '.'),
+                    tipo=Notificacion.TIPO_GASTO_COMPARTIDO,
+                    referencia_id=None,
+                    usuario=otro_usuario,
+                )
+            else:
+                Notificacion.objects.create(
+                    titulo=f'{request.user.username} liquidó las deudas contigo. ¡Están a mano!',
+                    tipo=Notificacion.TIPO_GASTO_COMPARTIDO,
+                    referencia_id=None,
+                    usuario=otro_usuario,
+                )
+
+        if neto == 0:
+            msg = f'¡Liquidado! Tú y {otro_usuario.username} quedan a mano.'
+        elif neto > 0:
+            msg = f'Liquidado. {otro_usuario.username} te debe ${abs(neto):,} neto.'.replace(',', '.')
+        else:
+            msg = f'Liquidado. Le debes ${abs(neto):,} neto a {otro_usuario.username}.'.replace(',', '.')
+        return Response({'detail': msg, 'neto': neto})
+
+
+# ── Asistente de división ───────────────────────────────────────────────────
+
+class SplitConfirmView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = SplitConfirmInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        grupo_id = data['grupo_id']
+        monto_total = data['monto_total']
+        concepto_nombre = (data.get('concepto_nombre') or 'División de cuenta').strip()
+        distribuciones = data['distribuciones']
+        payer_id = data.get('payer_id') or request.user.id
+
+        try:
+            grupo = Grupo.objects.get(id=grupo_id, activo=True)
+        except Grupo.DoesNotExist:
+            return Response({'detail': 'Grupo no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+        if not GrupoMiembro.objects.filter(usuario=request.user, grupo=grupo).exists():
+            return Response({'detail': 'No perteneces a este grupo.'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            payer = User.objects.get(id=payer_id)
+        except User.DoesNotExist:
+            return Response({'detail': 'El pagador no existe.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not GrupoMiembro.objects.filter(usuario=payer, grupo=grupo).exists():
+            return Response({'detail': 'El pagador no es miembro del grupo.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            concepto_grupo, _ = Concepto.objects.get_or_create(
+                grupo=grupo, nombre=concepto_nombre, tipo='Gasto',
+                defaults={'activo': True, 'usuario': None},
+            )
+            concepto_personal, _ = Concepto.objects.get_or_create(
+                usuario=payer, nombre=concepto_nombre, tipo='Gasto',
+                defaults={'activo': True, 'grupo': None},
+            )
+            Movimiento.objects.create(
+                tipo='Gasto', nombre=concepto_nombre,
+                detalle='División de gastos (pagador)',
+                monto=monto_total, concepto=concepto_personal,
+                usuario=payer, grupo=None, fecha_hora=timezone.now(),
+            )
+            mov = Movimiento.objects.create(
+                tipo='Gasto', nombre=concepto_nombre,
+                detalle='Asistente de división de gastos',
+                monto=monto_total, concepto=concepto_grupo,
+                usuario=payer, grupo=grupo, fecha_hora=timezone.now(),
+            )
+            gastos_creados = []
+            for d in distribuciones:
+                if str(d['usuario_id']) == str(payer.id):
+                    continue
+                monto_deudor = int(d['monto'])
+                try:
+                    deudor = User.objects.get(id=d['usuario_id'])
+                except User.DoesNotExist:
+                    continue
+                if not GrupoMiembro.objects.filter(usuario=deudor, grupo=grupo).exists():
+                    continue
+                GastoCompartido.objects.create(
+                    movimiento=mov,
+                    usuario_acreedor=payer,
+                    usuario_deudor=deudor,
+                    monto_pendiente=monto_deudor,
+                    grupo=grupo,
+                )
+                Notificacion.objects.create(
+                    titulo=(
+                        f'{payer.username} te asignó ${monto_deudor:,} '
+                        f'en "{concepto_nombre}" ({grupo.nombre}).'
+                    ).replace(',', '.'),
+                    tipo=Notificacion.TIPO_GASTO_COMPARTIDO,
+                    referencia_id=mov.id,
+                    usuario=deudor,
+                )
+                gastos_creados.append({'username': deudor.username, 'monto': monto_deudor})
+
+            if str(payer.id) != str(request.user.id):
+                Notificacion.objects.create(
+                    titulo=(
+                        f'{request.user.username} te registró como pagador de '
+                        f'${monto_total:,} en "{concepto_nombre}" ({grupo.nombre}).'
+                    ).replace(',', '.'),
+                    tipo=Notificacion.TIPO_GASTO_COMPARTIDO,
+                    referencia_id=mov.id,
+                    usuario=payer,
+                )
+            crear_notificaciones_grupo(
+                grupo, Notificacion.TIPO_GASTO,
+                f'División de cuenta de ${monto_total:,} registrada por {request.user.username}'.replace(',', '.'),
+                referencia_id=mov.id, excluir_usuario=request.user,
+            )
+
+        return Response({'ok': True, 'gastos': gastos_creados, 'movimiento_id': str(mov.id)})
+
+
+# ── Helpers de ahorros ──────────────────────────────────────────────────────
+
+def _get_or_create_concepto_ahorro(user, tipo):
+    nombre = 'Ahorro' if tipo == Concepto.TIPO_GASTO else 'Retiro de ahorro'
+    concepto, _ = Concepto.objects.get_or_create(
+        usuario=user, nombre=nombre, tipo=tipo,
+        defaults={'activo': True, 'grupo': None},
+    )
+    return concepto
+
+
+# ── Ahorros personales ──────────────────────────────────────────────────────
+
+class MetaAhorroPersonalListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        metas = (
+            MetaAhorro.objects
+            .filter(usuario=request.user, tipo=MetaAhorro.TIPO_PERSONAL, activa=True)
+            .order_by('fecha_limite', 'created_at')
+        )
+        return Response(MetaAhorroSerializer(metas, many=True).data)
+
+    def post(self, request):
+        serializer = MetaAhorroCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        meta = serializer.save(tipo=MetaAhorro.TIPO_PERSONAL, usuario=request.user, grupo=None)
+        return Response(MetaAhorroSerializer(meta).data, status=status.HTTP_201_CREATED)
+
+
+class MetaAhorroPersonalDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, meta_id):
+        try:
+            meta = MetaAhorro.objects.get(id=meta_id, usuario=request.user, tipo=MetaAhorro.TIPO_PERSONAL)
+        except MetaAhorro.DoesNotExist:
+            return Response({'detail': 'Meta no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        aportes = meta.aportes.select_related('usuario').order_by('-fecha')
+        data = MetaAhorroSerializer(meta).data
+        data['aportes'] = AporteAhorroSerializer(aportes, many=True).data
+        return Response(data)
+
+    def patch(self, request, meta_id):
+        try:
+            meta = MetaAhorro.objects.get(id=meta_id, usuario=request.user, tipo=MetaAhorro.TIPO_PERSONAL)
+        except MetaAhorro.DoesNotExist:
+            return Response({'detail': 'Meta no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = MetaAhorroCreateSerializer(meta, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(MetaAhorroSerializer(meta).data)
+
+
+class MetaAhorroPersonalAportarView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, meta_id):
+        try:
+            meta = MetaAhorro.objects.get(id=meta_id, usuario=request.user, tipo=MetaAhorro.TIPO_PERSONAL, activa=True)
+        except MetaAhorro.DoesNotExist:
+            return Response({'detail': 'Meta no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        monto_raw = str(request.data.get('monto', '0')).replace('.', '').replace(',', '')
+        try:
+            monto = int(monto_raw)
+            assert monto > 0
+        except (ValueError, AssertionError):
+            return Response({'detail': 'Monto inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            concepto = _get_or_create_concepto_ahorro(request.user, Concepto.TIPO_GASTO)
+            mov = Movimiento.objects.create(
+                tipo=Movimiento.TIPO_GASTO,
+                nombre=f'Ahorro: {meta.nombre}',
+                detalle='Aporte a meta de ahorro',
+                monto=monto, concepto=concepto,
+                usuario=request.user, grupo=None,
+                fecha_hora=timezone.now(),
+            )
+            AporteAhorro.objects.create(
+                meta=meta, usuario=request.user,
+                monto=monto, fecha=timezone.now(), movimiento=mov,
+            )
+
+        return Response(MetaAhorroSerializer(meta).data, status=status.HTTP_201_CREATED)
+
+
+class MetaAhorroPersonalRetirarView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, meta_id):
+        try:
+            meta = MetaAhorro.objects.get(id=meta_id, usuario=request.user, tipo=MetaAhorro.TIPO_PERSONAL, activa=True)
+        except MetaAhorro.DoesNotExist:
+            return Response({'detail': 'Meta no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        monto_raw = str(request.data.get('monto', '0')).replace('.', '').replace(',', '')
+        try:
+            monto = int(monto_raw)
+            ahorrado = meta.aportes.aggregate(t=Sum('monto'))['t'] or 0
+            assert 0 < monto <= ahorrado
+        except (ValueError, AssertionError):
+            return Response({'detail': 'Monto de retiro inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            concepto = _get_or_create_concepto_ahorro(request.user, Concepto.TIPO_INGRESO)
+            mov = Movimiento.objects.create(
+                tipo=Movimiento.TIPO_INGRESO,
+                nombre=f'Retiro de ahorro: {meta.nombre}',
+                detalle='Retiro de meta de ahorro',
+                monto=monto, concepto=concepto,
+                usuario=request.user, grupo=None,
+                fecha_hora=timezone.now(),
+            )
+            AporteAhorro.objects.create(
+                meta=meta, usuario=request.user,
+                monto=-monto, fecha=timezone.now(), movimiento=mov,
+            )
+
+        return Response(MetaAhorroSerializer(meta).data)
+
+
+class MetaAhorroPersonalArchivarView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, meta_id):
+        try:
+            meta = MetaAhorro.objects.get(id=meta_id, usuario=request.user, tipo=MetaAhorro.TIPO_PERSONAL)
+        except MetaAhorro.DoesNotExist:
+            return Response({'detail': 'Meta no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        meta.activa = False
+        meta.save()
+        return Response({'detail': f'Meta "{meta.nombre}" archivada.'})
+
+
+# ── Tarjetas ────────────────────────────────────────────────────────────────
+
+class TarjetaListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        tarjetas = list(Tarjeta.objects.filter(usuario=request.user, activa=True).order_by('-created_at'))
+        data = TarjetaSerializer(tarjetas, many=True).data
+        for item, tarjeta in zip(data, tarjetas):
+            if tarjeta.tipo == Tarjeta.TIPO_DEBITO:
+                ingresos = Movimiento.objects.filter(tarjeta=tarjeta, tipo=Movimiento.TIPO_INGRESO).aggregate(s=Sum('monto'))['s'] or 0
+                gastos = Movimiento.objects.filter(tarjeta=tarjeta, tipo=Movimiento.TIPO_GASTO).aggregate(s=Sum('monto'))['s'] or 0
+                item['saldo_disponible'] = ingresos - gastos
+            else:
+                item['saldo_disponible'] = None
+        return Response(data)
+
+    def post(self, request):
+        serializer = TarjetaCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        tarjeta = serializer.save(usuario=request.user)
+        return Response(TarjetaSerializer(tarjeta).data, status=status.HTTP_201_CREATED)
+
+
+class TarjetaDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, card_id):
+        try:
+            tarjeta = Tarjeta.objects.get(id=card_id, usuario=request.user, activa=True)
+        except Tarjeta.DoesNotExist:
+            return Response({'detail': 'Tarjeta no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        movimientos = (
+            Movimiento.objects
+            .filter(tarjeta=tarjeta)
+            .select_related('concepto')
+            .order_by('-fecha_hora')
+        )
+        paginator = PageNumberPagination()
+        paginator.page_size = 15
+        page = paginator.paginate_queryset(movimientos, request)
+        total_gastos = movimientos.filter(tipo='Gasto').aggregate(t=Sum('monto'))['t'] or 0
+        total_ingresos = movimientos.filter(tipo='Ingreso').aggregate(t=Sum('monto'))['t'] or 0
+        response = paginator.get_paginated_response(MovimientoSerializer(page, many=True).data)
+        response.data['tarjeta'] = TarjetaSerializer(tarjeta).data
+        response.data['total_gastos'] = total_gastos
+        response.data['total_ingresos'] = total_ingresos
+        return response
+
+    def delete(self, request, card_id):
+        try:
+            tarjeta = Tarjeta.objects.get(id=card_id, usuario=request.user, activa=True)
+        except Tarjeta.DoesNotExist:
+            return Response({'detail': 'Tarjeta no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        tarjeta.activa = False
+        tarjeta.save()
+        return Response({'detail': 'Tarjeta eliminada.'})
+
+
+# ── Ahorros grupales ────────────────────────────────────────────────────────
+
+class MetaAhorroGrupalListCreateView(APIView):
+    permission_classes = [IsGroupMember]
+
+    def get(self, request, group_id):
+        metas = (
+            MetaAhorro.objects
+            .filter(grupo_id=group_id, tipo=MetaAhorro.TIPO_GRUPAL, activa=True)
+            .order_by('fecha_limite', 'created_at')
+        )
+        return Response(MetaAhorroSerializer(metas, many=True).data)
+
+    def post(self, request, group_id):
+        if not GrupoMiembro.objects.filter(usuario=request.user, grupo_id=group_id, rol=GrupoMiembro.ROL_ADMIN).exists():
+            return Response({'detail': 'Solo el administrador puede crear metas grupales.'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            grupo = Grupo.objects.get(id=group_id, activo=True)
+        except Grupo.DoesNotExist:
+            return Response({'detail': 'Grupo no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = MetaAhorroCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        meta = serializer.save(tipo=MetaAhorro.TIPO_GRUPAL, usuario=None, grupo=grupo)
+        notificar = bool(request.data.get('notificar', False))
+        if notificar:
+            crear_notificaciones_grupo(
+                grupo, Notificacion.TIPO_GASTO,
+                f'{request.user.username} creó la meta de ahorro grupal "{meta.nombre}".',
+                referencia_id=meta.id, excluir_usuario=request.user,
+            )
+        return Response(MetaAhorroSerializer(meta).data, status=status.HTTP_201_CREATED)
+
+
+class MetaAhorroGrupalDetailView(APIView):
+    permission_classes = [IsGroupMember]
+
+    def get(self, request, group_id, meta_id):
+        try:
+            meta = MetaAhorro.objects.get(id=meta_id, grupo_id=group_id, tipo=MetaAhorro.TIPO_GRUPAL)
+        except MetaAhorro.DoesNotExist:
+            return Response({'detail': 'Meta no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        aportes = meta.aportes.select_related('usuario').order_by('-fecha')
+        ahorrado = aportes.aggregate(t=Sum('monto'))['t'] or 0
+
+        miembros = GrupoMiembro.objects.filter(grupo_id=group_id).select_related('usuario')
+        desglose = []
+        for mem in miembros:
+            monto_mem = aportes.filter(usuario=mem.usuario).aggregate(t=Sum('monto'))['t'] or 0
+            if monto_mem > 0:
+                desglose.append({
+                    'username': mem.usuario.username,
+                    'monto': monto_mem,
+                    'pct_aporte': round(monto_mem / ahorrado * 100) if ahorrado else 0,
+                })
+        desglose.sort(key=lambda x: x['monto'], reverse=True)
+
+        data = MetaAhorroSerializer(meta).data
+        data['aportes'] = AporteAhorroSerializer(aportes, many=True).data
+        data['desglose'] = desglose
+        return Response(data)
+
+    def patch(self, request, group_id, meta_id):
+        if not GrupoMiembro.objects.filter(usuario=request.user, grupo_id=group_id, rol=GrupoMiembro.ROL_ADMIN).exists():
+            return Response({'detail': 'Solo el administrador puede editar metas grupales.'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            meta = MetaAhorro.objects.get(id=meta_id, grupo_id=group_id, tipo=MetaAhorro.TIPO_GRUPAL)
+        except MetaAhorro.DoesNotExist:
+            return Response({'detail': 'Meta no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = MetaAhorroCreateSerializer(meta, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(MetaAhorroSerializer(meta).data)
+
+
+class MetaAhorroGrupalAportarView(APIView):
+    permission_classes = [IsGroupMember]
+
+    def post(self, request, group_id, meta_id):
+        try:
+            meta = MetaAhorro.objects.get(id=meta_id, grupo_id=group_id, tipo=MetaAhorro.TIPO_GRUPAL, activa=True)
+        except MetaAhorro.DoesNotExist:
+            return Response({'detail': 'Meta no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            grupo = Grupo.objects.get(id=group_id, activo=True)
+        except Grupo.DoesNotExist:
+            return Response({'detail': 'Grupo no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+        monto_raw = str(request.data.get('monto', '0')).replace('.', '').replace(',', '')
+        try:
+            monto = int(monto_raw)
+            assert monto > 0
+        except (ValueError, AssertionError):
+            return Response({'detail': 'Monto inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            concepto = _get_or_create_concepto_ahorro(request.user, Concepto.TIPO_GASTO)
+            mov = Movimiento.objects.create(
+                tipo=Movimiento.TIPO_GASTO,
+                nombre=f'Ahorro grupal: {meta.nombre}',
+                detalle=f'Aporte a meta de ahorro del grupo {grupo.nombre}',
+                monto=monto, concepto=concepto,
+                usuario=request.user, grupo=None,
+                fecha_hora=timezone.now(),
+            )
+            AporteAhorro.objects.create(
+                meta=meta, usuario=request.user,
+                monto=monto, fecha=timezone.now(), movimiento=mov,
+            )
+            ahorrado = meta.aportes.aggregate(t=Sum('monto'))['t'] or 0
+            if meta.monto_objetivo and ahorrado >= meta.monto_objetivo:
+                crear_notificaciones_grupo(
+                    grupo, Notificacion.TIPO_GASTO,
+                    f'¡La meta de ahorro "{meta.nombre}" fue completada!',
+                    referencia_id=meta.id,
+                )
+
+        return Response(MetaAhorroSerializer(meta).data, status=status.HTTP_201_CREATED)
+
+
+class MetaAhorroGrupalArchivarView(APIView):
+    permission_classes = [IsGroupMember]
+
+    def post(self, request, group_id, meta_id):
+        if not GrupoMiembro.objects.filter(usuario=request.user, grupo_id=group_id, rol=GrupoMiembro.ROL_ADMIN).exists():
+            return Response({'detail': 'Solo el administrador puede archivar metas grupales.'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            meta = MetaAhorro.objects.get(id=meta_id, grupo_id=group_id, tipo=MetaAhorro.TIPO_GRUPAL)
+        except MetaAhorro.DoesNotExist:
+            return Response({'detail': 'Meta no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        meta.activa = False
+        meta.save()
+        return Response({'detail': f'Meta "{meta.nombre}" archivada.'})
