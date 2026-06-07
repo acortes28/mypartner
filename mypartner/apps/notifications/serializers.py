@@ -16,22 +16,21 @@ class NotificacionSerializer(serializers.ModelSerializer):
             return ctx
         ctx['referencia_id'] = str(obj.referencia_id)
 
+        ref_id = str(obj.referencia_id)
         try:
             if obj.tipo == Notificacion.TIPO_ANUNCIO:
-                from apps.announcements.models import Anuncio
-                anuncio = Anuncio.objects.get(id=obj.referencia_id)
-                ctx['grupo_id'] = str(anuncio.grupo_id)
+                anuncio = self.context.get('anuncios', {}).get(ref_id)
+                if anuncio:
+                    ctx['grupo_id'] = str(anuncio.grupo_id)
 
             elif obj.tipo in (Notificacion.TIPO_GASTO, Notificacion.TIPO_INGRESO, Notificacion.TIPO_GASTO_COMPARTIDO):
-                from apps.finances.models import Movimiento
-                mov = Movimiento.objects.get(id=obj.referencia_id)
-                if mov.grupo_id:
+                mov = self.context.get('movimientos', {}).get(ref_id)
+                if mov and mov.grupo_id:
                     ctx['grupo_id'] = str(mov.grupo_id)
 
             elif obj.tipo == Notificacion.TIPO_PRESUPUESTO:
-                from apps.finances.models import RegistroPresupuesto
-                reg = RegistroPresupuesto.objects.get(id=obj.referencia_id)
-                if reg.grupo_id:
+                reg = self.context.get('presupuestos', {}).get(ref_id)
+                if reg and reg.grupo_id:
                     ctx['grupo_id'] = str(reg.grupo_id)
 
             # TIPO_INVITACION: referencia_id es el UUID de la invitación — Flutter lo usa directo

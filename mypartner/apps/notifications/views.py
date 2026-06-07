@@ -6,6 +6,38 @@ from .models import Notificacion
 from .serializers import NotificacionSerializer
 
 
+def _build_ref_context(notifications):
+    """Bulk-fetch related objects to avoid N+1 queries in get_contexto_navegacion."""
+    from apps.announcements.models import Anuncio
+    from apps.finances.models import Movimiento, RegistroPresupuesto
+
+    anuncio_ids, movimiento_ids, presupuesto_ids = [], [], []
+    for n in notifications:
+        if not n.referencia_id:
+            continue
+        if n.tipo == Notificacion.TIPO_ANUNCIO:
+            anuncio_ids.append(n.referencia_id)
+        elif n.tipo in (Notificacion.TIPO_GASTO, Notificacion.TIPO_INGRESO, Notificacion.TIPO_GASTO_COMPARTIDO):
+            movimiento_ids.append(n.referencia_id)
+        elif n.tipo == Notificacion.TIPO_PRESUPUESTO:
+            presupuesto_ids.append(n.referencia_id)
+
+    return {
+        'anuncios': {
+            str(a.id): a
+            for a in Anuncio.objects.filter(id__in=anuncio_ids).only('id', 'grupo_id')
+        } if anuncio_ids else {},
+        'movimientos': {
+            str(m.id): m
+            for m in Movimiento.objects.filter(id__in=movimiento_ids).only('id', 'grupo_id')
+        } if movimiento_ids else {},
+        'presupuestos': {
+            str(r.id): r
+            for r in RegistroPresupuesto.objects.filter(id__in=presupuesto_ids).only('id', 'grupo_id')
+        } if presupuesto_ids else {},
+    }
+
+
 class NotificacionListView(APIView):
     def get(self, request):
         solo_no_leidas = request.query_params.get('unread') == 'true'
@@ -20,7 +52,8 @@ class NotificacionListView(APIView):
         paginator = PageNumberPagination()
         paginator.page_size = 10
         page = paginator.paginate_queryset(qs, request)
-        serializer = NotificacionSerializer(page, many=True)
+        context = _build_ref_context(page)
+        serializer = NotificacionSerializer(page, many=True, context=context)
         return paginator.get_paginated_response(serializer.data)
 
 
