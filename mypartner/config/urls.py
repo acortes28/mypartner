@@ -9,9 +9,6 @@ api_prefix = 'api/v1/'
 urlpatterns = [
     # Admin
     path('admin/', admin.site.urls),
-    # API docs
-    path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
-    path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
     # REST API
     path(api_prefix, include('apps.users.urls')),
     path(api_prefix, include('apps.groups.urls')),
@@ -26,4 +23,12 @@ urlpatterns = [
     path('', include('apps.documents.web_urls')),
     path('', include('apps.announcements.web_urls')),
     path('', include('apps.notifications.web_urls')),
-] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+]
+
+if settings.DEBUG:
+    urlpatterns += [
+        path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
+        path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
+    ]
+
+urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

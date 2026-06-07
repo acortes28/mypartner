@@ -31,3 +31,5 @@ media/
 .DS_Store
 
 mypartner_app/
+.claude/
+CLAUDE.md
