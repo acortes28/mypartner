@@ -761,7 +761,6 @@ class PresupuestoPersonalListCreateView(APIView):
         campos_base = dict(
             tipo=data['tipo'],
             nombre=data['nombre'],
-            detalle=data.get('detalle', ''),
             fecha=data['fecha'],
             periodicidad=data.get('periodicidad', 'Puntual'),
             fecha_fin=data.get('fecha_fin'),
