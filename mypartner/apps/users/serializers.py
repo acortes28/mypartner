@@ -43,6 +43,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         password = validated_data.pop('password')
         user = User(**validated_data)
         user.set_password(password)
+        user.is_active = False
         user.save()
         return user
 
@@ -67,10 +68,20 @@ class LoginSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True)
 
     def validate(self, attrs):
-        user = authenticate(username=attrs['username'], password=attrs['password'])
+        from django.contrib.auth import authenticate as _auth
+        user = _auth(username=attrs['username'], password=attrs['password'])
         if not user:
-            raise serializers.ValidationError('Usuario o contraseña inválidos.')
-        if not user.is_active:
+            # Check if user exists but is inactive (unverified email)
+            from .models import User as _User
+            try:
+                existing = _User.objects.get(username=attrs['username'])
+                existing.check_password(attrs['password'])
+                if not existing.is_active:
+                    raise serializers.ValidationError(
+                        'Debes verificar tu correo electrónico antes de iniciar sesión.'
+                    )
+            except _User.DoesNotExist:
+                pass
             raise serializers.ValidationError('Usuario o contraseña inválidos.')
         attrs['user'] = user
         return attrs

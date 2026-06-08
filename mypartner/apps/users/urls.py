@@ -9,5 +9,6 @@ urlpatterns = [
     path('auth/token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
     path('auth/password-recovery/', views.PasswordRecoveryRequestView.as_view(), name='password-recovery-request'),
     path('auth/password-recovery/confirm/', views.PasswordRecoveryConfirmView.as_view(), name='password-recovery-confirm'),
+    path('auth/verify-email/', views.VerifyEmailAPIView.as_view(), name='verify-email'),
     path('users/me/', views.UserProfileView.as_view(), name='user-profile'),
 ]

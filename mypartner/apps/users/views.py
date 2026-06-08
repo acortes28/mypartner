@@ -14,7 +14,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import User, PasswordResetToken
+from .models import User, PasswordResetToken, EmailVerificationToken
 from .serializers import (
     LoginSerializer,
     PasswordRecoveryConfirmSerializer,
@@ -30,9 +30,38 @@ class RegisterView(APIView):
     def post(self, request):
         serializer = UserRegistrationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        user = serializer.save()
+
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        expira_en = timezone.now() + timedelta(hours=24)
+
+        EmailVerificationToken.objects.create(
+            user=user,
+            token_hash=token_hash,
+            expira_en=expira_en,
+        )
+
+        verify_url = f"{settings.FRONTEND_URL.rstrip('/')}/verify-email/?token={raw_token}"
+        try:
+            html_body = render_to_string('emails/email_verification.html', {
+                'verify_url': verify_url,
+                'first_name': user.first_name,
+            })
+            msg = EmailMultiAlternatives(
+                subject='Verifica tu correo — Finanzosos',
+                body=f'Haz clic en el siguiente enlace para verificar tu correo:\n\n{verify_url}\n\nEste enlace expira en 24 horas.',
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                to=[user.email],
+            )
+            msg.attach_alternative(html_body, 'text/html')
+            msg.send(fail_silently=False)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception('Error al enviar correo de verificación a %s', user.email)
+
         return Response(
-            {'detail': 'Registro exitoso. Ya puedes iniciar sesión.'},
+            {'detail': 'Registro exitoso. Revisa tu correo para verificar tu cuenta.'},
             status=status.HTTP_201_CREATED,
         )
 
@@ -157,3 +186,41 @@ class PasswordRecoveryConfirmView(APIView):
         reset_token.save()
 
         return Response({'detail': 'Contraseña cambiada exitosamente.'})
+
+
+class VerifyEmailAPIView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        raw_token = request.query_params.get('token', '')
+        if not raw_token:
+            return Response(
+                {'detail': 'Token requerido.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+
+        try:
+            verification = EmailVerificationToken.objects.select_related('user').get(
+                token_hash=token_hash, usado=False
+            )
+        except EmailVerificationToken.DoesNotExist:
+            return Response(
+                {'detail': 'El enlace de verificación es inválido o ya fue utilizado.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if timezone.now() > verification.expira_en:
+            return Response(
+                {'detail': 'El enlace de verificación ha expirado.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = verification.user
+        user.is_active = True
+        user.save(update_fields=['is_active'])
+        verification.usado = True
+        verification.save(update_fields=['usado'])
+
+        return Response({'detail': 'Correo verificado exitosamente. Ya puedes iniciar sesión.'})

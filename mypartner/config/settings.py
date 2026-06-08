@@ -12,6 +12,9 @@ print("DEBUG : ", DEBUG)
 
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='*').split(',')
 
+ONESIGNAL_APP_ID = config('ONESIGNAL_APP_ID', default='')
+ONESIGNAL_REST_API_KEY = config('ONESIGNAL_REST_API_KEY', default='')
+
 AUTH_USER_MODEL = 'users.User'
 
 INSTALLED_APPS = [
