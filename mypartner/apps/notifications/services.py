@@ -27,6 +27,8 @@ def crear_notificaciones_grupo(grupo, tipo, titulo, referencia_id=None, excluir_
         for m in miembros_qs
     ]
     Notificacion.objects.bulk_create(notificaciones)
+    for notif in notificaciones:
+        _send_push(notif.usuario_id, notif.titulo, notif.tipo)
 
 
 def _send_push(usuario_id, titulo, tipo):

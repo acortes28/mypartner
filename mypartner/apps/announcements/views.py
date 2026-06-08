@@ -90,7 +90,7 @@ class ComentarioCreateView(APIView):
 
     def post(self, request, group_id, announcement_id):
         try:
-            anuncio = Anuncio.objects.get(
+            anuncio = Anuncio.objects.select_related('grupo').get(
                 id=announcement_id, grupo_id=group_id, activo=True
             )
         except Anuncio.DoesNotExist:
@@ -99,4 +99,13 @@ class ComentarioCreateView(APIView):
         serializer = ComentarioCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         comentario = serializer.save(usuario=request.user, anuncio=anuncio)
+
+        crear_notificaciones_grupo(
+            anuncio.grupo,
+            Notificacion.TIPO_ANUNCIO,
+            f'{request.user.username} comentó en "{anuncio.nombre}": {comentario.contenido[:80]}',
+            referencia_id=anuncio.id,
+            excluir_usuario=request.user,
+        )
+
         return Response(ComentarioSerializer(comentario).data, status=status.HTTP_201_CREATED)
