@@ -98,6 +98,10 @@ class UserProfileView(APIView):
         serializer = UserProfileSerializer(request.user)
         return Response(serializer.data)
 
+    def delete(self, request):
+        request.user.delete()
+        return Response({'detail': 'Cuenta eliminada exitosamente.'}, status=status.HTTP_200_OK)
+
 
 class PasswordRecoveryRequestView(APIView):
     permission_classes = [AllowAny]

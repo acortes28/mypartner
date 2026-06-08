@@ -147,6 +147,8 @@ class GastoCompartidoSerializer(serializers.ModelSerializer):
     def get_concepto_nombre(self, obj):
         if obj.movimiento and obj.movimiento.concepto:
             return obj.movimiento.concepto.nombre
+        if not obj.movimiento:
+            return 'Liquidación de deuda'
         return 'sin concepto'
 
     def get_movimiento_id(self, obj):
