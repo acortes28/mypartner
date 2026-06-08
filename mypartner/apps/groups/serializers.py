@@ -51,8 +51,9 @@ class SetRolSerializer(serializers.Serializer):
 
 class InvitacionSerializer(serializers.ModelSerializer):
     grupo_nombre = serializers.CharField(source='grupo.nombre', read_only=True)
+    grupo_id = serializers.UUIDField(source='grupo.id', read_only=True)
     emisor_username = serializers.CharField(source='emisor.username', read_only=True)
 
     class Meta:
         model = Invitacion
-        fields = ['id', 'grupo_nombre', 'emisor_username', 'comentario', 'estado', 'created_at']
+        fields = ['id', 'grupo_id', 'grupo_nombre', 'emisor_username', 'comentario', 'estado', 'created_at']
