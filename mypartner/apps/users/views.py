@@ -99,7 +99,15 @@ class UserProfileView(APIView):
         return Response(serializer.data)
 
     def delete(self, request):
-        request.user.delete()
+        from django.db import transaction
+        user = request.user
+        with transaction.atomic():
+            # Eliminar contenido protegido antes de borrar el usuario
+            user.movimientos.all().delete()
+            user.anuncios.all().delete()       # cascadea a comentarios de esos anuncios
+            user.comentarios.all().delete()    # comentarios en anuncios de otros
+            user.documentos.all().delete()
+            user.delete()
         return Response({'detail': 'Cuenta eliminada exitosamente.'}, status=status.HTTP_200_OK)
 
 
