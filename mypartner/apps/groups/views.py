@@ -40,11 +40,6 @@ class MyGroupView(APIView):
 
 class CreateGroupView(APIView):
     def post(self, request):
-        if _get_user_group(request.user):
-            return Response(
-                {'detail': 'Ya perteneces a un grupo. Abandónalo antes de crear uno nuevo.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
         serializer = CreateGrupoSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         grupo = serializer.save()
