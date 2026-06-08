@@ -11,6 +11,7 @@ djangorestframework==3.17.1
 djangorestframework_simplejwt==5.5.1
 drf-spectacular==0.29.0
 gunicorn==23.0.0
+gevent==24.11.1
 whitenoise==6.9.0
 idna==3.17
 inflection==0.5.1
