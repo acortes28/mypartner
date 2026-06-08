@@ -1,5 +1,6 @@
 import csv
 import io
+import logging
 from datetime import date
 
 from django.contrib.auth import get_user_model
@@ -39,12 +40,14 @@ from .serializers import (
 )
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 def _get_grupo_or_404(group_id):
     try:
         return Grupo.objects.get(id=group_id, activo=True)
     except Grupo.DoesNotExist:
+        logger.warning('Grupo %s no encontrado o inactivo.', group_id)
         return None
 
 
@@ -66,7 +69,8 @@ class ConceptoListCreateView(APIView):
             return Response({'detail': 'Grupo no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
         serializer = ConceptoSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        serializer.save(grupo=grupo, usuario=None)
+        concepto = serializer.save(grupo=grupo, usuario=None)
+        logger.info('Concepto creado grupo=%s nombre=%s user=%s', group_id, concepto.nombre, request.user.id)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
@@ -77,25 +81,30 @@ class ConceptoDetailView(APIView):
         try:
             concepto = Concepto.objects.get(id=concept_id, grupo_id=group_id, activo=True)
         except Concepto.DoesNotExist:
+            logger.warning('Concepto %s no encontrado grupo=%s user=%s', concept_id, group_id, request.user.id)
             return Response({'detail': 'Concepto no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
         serializer = ConceptoSerializer(concepto, data={'nombre': request.data.get('nombre', concepto.nombre), 'tipo': concepto.tipo})
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        logger.info('Concepto actualizado grupo=%s id=%s user=%s', group_id, concept_id, request.user.id)
         return Response(serializer.data)
 
     def delete(self, request, group_id, concept_id):
         try:
             concepto = Concepto.objects.get(id=concept_id, grupo_id=group_id, activo=True)
         except Concepto.DoesNotExist:
+            logger.warning('Concepto %s no encontrado grupo=%s user=%s', concept_id, group_id, request.user.id)
             return Response({'detail': 'Concepto no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
         has_movements = Movimiento.objects.filter(concepto=concepto).exists()
         if has_movements:
+            logger.warning('Concepto %s tiene movimientos, no se puede eliminar grupo=%s user=%s', concept_id, group_id, request.user.id)
             return Response(
                 {'detail': 'Este concepto tiene movimientos asociados.', 'tiene_movimientos': True, 'concepto_id': str(concepto.id)},
                 status=status.HTTP_409_CONFLICT,
             )
         concepto.activo = False
         concepto.save()
+        logger.info('Concepto eliminado grupo=%s id=%s user=%s', group_id, concept_id, request.user.id)
         return Response({'detail': 'Concepto eliminado.'})
 
 
@@ -105,15 +114,19 @@ class ConceptoDeleteWithMovementsView(APIView):
     def post(self, request, group_id, concept_id):
         accion = request.data.get('accion')
         if accion not in ('eliminar_movimientos', 'mantener_movimientos'):
+            logger.warning('Acción inválida "%s" en ConceptoDeleteWithMovements grupo=%s user=%s', accion, group_id, request.user.id)
             return Response({'detail': 'Acción inválida.'}, status=status.HTTP_400_BAD_REQUEST)
         try:
             concepto = Concepto.objects.get(id=concept_id, grupo_id=group_id, activo=True)
         except Concepto.DoesNotExist:
+            logger.warning('Concepto %s no encontrado grupo=%s user=%s', concept_id, group_id, request.user.id)
             return Response({'detail': 'Concepto no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
         if accion == 'eliminar_movimientos':
-            Movimiento.objects.filter(concepto=concepto).delete()
+            deleted_count = Movimiento.objects.filter(concepto=concepto).delete()[0]
+            logger.info('Concepto %s eliminado con %d movimientos grupo=%s user=%s', concept_id, deleted_count, group_id, request.user.id)
         else:
             Movimiento.objects.filter(concepto=concepto).update(concepto=None)
+            logger.info('Concepto %s eliminado, movimientos conservados grupo=%s user=%s', concept_id, group_id, request.user.id)
         concepto.activo = False
         concepto.save()
         return Response({'detail': 'Concepto eliminado.'})
@@ -124,13 +137,14 @@ class MovimientoListView(APIView):
     permission_classes = [IsGroupMember]
 
     def get(self, request, group_id):
+        concepto_id = request.query_params.get('concepto')
+        logger.debug('Listando movimientos grupo=%s concepto=%s user=%s', group_id, concepto_id, request.user.id)
         movimientos = (
             Movimiento.objects
             .filter(grupo_id=group_id)
             .select_related('concepto', 'usuario')
             .order_by('-fecha_hora')
         )
-        concepto_id = request.query_params.get('concepto')
         if concepto_id:
             movimientos = movimientos.filter(concepto_id=concepto_id)
         paginator = PageNumberPagination()
@@ -139,6 +153,7 @@ class MovimientoListView(APIView):
         return paginator.get_paginated_response(MovimientoSerializer(page, many=True).data)
 
     def post(self, request, group_id):
+        logger.debug('POST bloqueado en MovimientoListView grupo=%s user=%s', group_id, request.user.id)
         return Response(
             {'detail': 'Los movimientos grupales solo pueden crearse mediante replicación de un movimiento personal.'},
             status=status.HTTP_405_METHOD_NOT_ALLOWED,
@@ -162,6 +177,7 @@ class MovimientoExportView(APIView):
     permission_classes = [IsGroupMember]
 
     def get(self, request, group_id):
+        logger.info('Exportando movimientos CSV grupo=%s user=%s', group_id, request.user.id)
         movimientos = (
             Movimiento.objects.filter(grupo_id=group_id)
             .select_related('concepto', 'usuario')
@@ -243,6 +259,7 @@ class PresupuestoListCreateView(APIView):
         return Response({'registros': RegistroPresupuestoSerializer(registros, many=True).data, 'total': total})
 
     def post(self, request, group_id):
+        logger.debug('Creando registro presupuesto grupo=%s data=%s user=%s', group_id, request.data, request.user.id)
         grupo = _get_grupo_or_404(group_id)
         if not grupo:
             return Response({'detail': 'Grupo no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
@@ -250,8 +267,10 @@ class PresupuestoListCreateView(APIView):
         serializer.is_valid(raise_exception=True)
         concepto = serializer.validated_data.get('concepto')
         if concepto and str(concepto.grupo_id) != str(group_id):
+            logger.warning('Concepto %s no pertenece al grupo=%s user=%s', concepto.id, group_id, request.user.id)
             return Response({'detail': 'El concepto no pertenece a este grupo.'}, status=status.HTTP_400_BAD_REQUEST)
         registro = serializer.save(grupo=grupo, usuario=None)
+        logger.info('RegistroPresupuesto creado grupo=%s id=%s concepto=%s user=%s', group_id, registro.id, registro.concepto.nombre, request.user.id)
         crear_notificaciones_grupo(
             grupo, Notificacion.TIPO_PRESUPUESTO,
             f'Se realizó un cambio en el presupuesto de {registro.concepto.nombre}',
@@ -267,10 +286,12 @@ class PresupuestoDetailView(APIView):
         try:
             registro = RegistroPresupuesto.objects.select_related('concepto').get(id=budget_id, grupo_id=group_id)
         except RegistroPresupuesto.DoesNotExist:
+            logger.warning('RegistroPresupuesto %s no encontrado grupo=%s user=%s', budget_id, group_id, request.user.id)
             return Response({'detail': 'Registro no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
         serializer = RegistroPresupuestoUpdateSerializer(registro, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         registro = serializer.save()
+        logger.info('RegistroPresupuesto actualizado grupo=%s id=%s user=%s', group_id, budget_id, request.user.id)
         grupo = Grupo.objects.get(id=group_id)
         crear_notificaciones_grupo(
             grupo, Notificacion.TIPO_PRESUPUESTO,
@@ -283,10 +304,12 @@ class PresupuestoDetailView(APIView):
         try:
             registro = RegistroPresupuesto.objects.select_related('concepto').get(id=budget_id, grupo_id=group_id)
         except RegistroPresupuesto.DoesNotExist:
+            logger.warning('RegistroPresupuesto %s no encontrado grupo=%s user=%s', budget_id, group_id, request.user.id)
             return Response({'detail': 'Registro no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
         nombre_concepto = registro.concepto.nombre
         grupo = Grupo.objects.get(id=group_id)
         registro.delete()
+        logger.info('RegistroPresupuesto eliminado grupo=%s id=%s concepto=%s user=%s', group_id, budget_id, nombre_concepto, request.user.id)
         crear_notificaciones_grupo(
             grupo, Notificacion.TIPO_PRESUPUESTO,
             f'Se realizó un cambio en el presupuesto de {nombre_concepto}',
@@ -316,15 +339,26 @@ class MovimientoPersonalListView(APIView):
         return paginator.get_paginated_response(MovimientoSerializer(page, many=True).data)
 
     def post(self, request):
+        logger.debug(
+            'Creando movimiento personal user=%s tipo=%s monto=%s concepto=%s grupo=%s compartido=%s',
+            request.user.id,
+            request.data.get('tipo'),
+            request.data.get('monto'),
+            request.data.get('concepto'),
+            request.data.get('grupo_id'),
+            request.data.get('es_compartido'),
+        )
         serializer = MovimientoCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         concepto = serializer.validated_data.get('concepto')
         if concepto and concepto.usuario_id != request.user.pk:
+            logger.warning('Concepto %s no pertenece al user=%s', concepto.id, request.user.id)
             return Response({'detail': 'El concepto no pertenece al usuario.'}, status=status.HTTP_400_BAD_REQUEST)
 
         tarjeta = serializer.validated_data.get('tarjeta')
         if tarjeta and tarjeta.usuario_id != request.user.pk:
+            logger.warning('Tarjeta %s no pertenece al user=%s', tarjeta.id, request.user.id)
             return Response({'detail': 'La tarjeta no pertenece al usuario.'}, status=status.HTTP_400_BAD_REQUEST)
 
         # Campos opcionales de replicación (no pasan por el serializer del modelo)
@@ -406,6 +440,11 @@ class MovimientoPersonalListView(APIView):
                     except GrupoMiembro.DoesNotExist:
                         pass
 
+        logger.info(
+            'Movimiento personal creado id=%s tipo=%s monto=%s user=%s replica_grupo=%s gasto_compartido=%s',
+            mov_personal.id, mov_personal.tipo, mov_personal.monto, request.user.id,
+            replica_data is not None, gasto_compartido_data is not None,
+        )
         response_data = MovimientoSerializer(mov_personal).data
         response_data['replica'] = replica_data
         response_data['gasto_compartido'] = gasto_compartido_data
@@ -433,9 +472,11 @@ class ReplicarMovimientoView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, movement_id):
+        logger.debug('Replicando movimiento %s a grupo=%s user=%s', movement_id, request.data.get('grupo_id'), request.user.id)
         try:
             mov_personal = Movimiento.objects.get(id=movement_id, usuario=request.user, grupo__isnull=True)
         except Movimiento.DoesNotExist:
+            logger.warning('Movimiento %s no encontrado para replicar user=%s', movement_id, request.user.id)
             return Response({'detail': 'Movimiento no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
         grupo_id = request.data.get('grupo_id')
@@ -446,9 +487,11 @@ class ReplicarMovimientoView(APIView):
             return Response({'detail': 'grupo_id es requerido.'}, status=status.HTTP_400_BAD_REQUEST)
 
         if not GrupoMiembro.objects.filter(usuario=request.user, grupo_id=grupo_id, grupo__activo=True).exists():
+            logger.warning('User=%s no es miembro del grupo=%s para replicar movimiento', request.user.id, grupo_id)
             return Response({'detail': 'No eres miembro de este grupo.'}, status=status.HTTP_403_FORBIDDEN)
 
         if ReplicaGrupal.objects.filter(movimiento_personal=mov_personal, grupo_id=grupo_id).exists():
+            logger.warning('Movimiento %s ya replicado al grupo=%s user=%s', movement_id, grupo_id, request.user.id)
             return Response({'detail': 'Este movimiento ya fue replicado a este grupo.'}, status=status.HTTP_409_CONFLICT)
 
         try:
@@ -503,6 +546,10 @@ class ReplicarMovimientoView(APIView):
             except GrupoMiembro.DoesNotExist:
                 pass
 
+        logger.info(
+            'Movimiento %s replicado a grupo=%s user=%s gasto_compartido=%s',
+            movement_id, grupo_id, request.user.id, gasto_compartido_data is not None,
+        )
         return Response({
             'replica': ReplicaGrupalSerializer(replica).data,
             'gasto_compartido': gasto_compartido_data,
@@ -578,8 +625,10 @@ class ConceptoPersonalListCreateView(APIView):
         serializer.is_valid(raise_exception=True)
         nombre = serializer.validated_data['nombre']
         if Concepto.objects.filter(usuario=request.user, nombre__iexact=nombre, activo=True, grupo__isnull=True).exists():
+            logger.warning('Concepto duplicado "%s" user=%s', nombre, request.user.id)
             return Response({'detail': f'Ya existe un concepto llamado "{nombre}".'}, status=status.HTTP_409_CONFLICT)
         concepto = serializer.save(usuario=request.user, grupo=None)
+        logger.info('Concepto personal creado id=%s nombre=%s user=%s', concepto.id, concepto.nombre, request.user.id)
         return Response(ConceptoSerializer(concepto).data, status=status.HTTP_201_CREATED)
 
 
@@ -590,29 +639,35 @@ class ConceptoPersonalDetailView(APIView):
         try:
             concepto = Concepto.objects.get(id=concept_id, usuario=request.user, activo=True, grupo__isnull=True)
         except Concepto.DoesNotExist:
+            logger.warning('Concepto personal %s no encontrado user=%s', concept_id, request.user.id)
             return Response({'detail': 'Concepto no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
         nombre = request.data.get('nombre', concepto.nombre).strip()
         if Concepto.objects.filter(
             usuario=request.user, nombre__iexact=nombre, activo=True, grupo__isnull=True
         ).exclude(id=concept_id).exists():
+            logger.warning('Concepto duplicado "%s" user=%s', nombre, request.user.id)
             return Response({'detail': f'Ya existe un concepto llamado "{nombre}".'}, status=status.HTTP_409_CONFLICT)
         serializer = ConceptoSerializer(concepto, data={'nombre': nombre, 'tipo': concepto.tipo})
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        logger.info('Concepto personal actualizado id=%s nombre=%s user=%s', concept_id, nombre, request.user.id)
         return Response(serializer.data)
 
     def delete(self, request, concept_id):
         try:
             concepto = Concepto.objects.get(id=concept_id, usuario=request.user, activo=True, grupo__isnull=True)
         except Concepto.DoesNotExist:
+            logger.warning('Concepto personal %s no encontrado user=%s', concept_id, request.user.id)
             return Response({'detail': 'Concepto no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
         if Movimiento.objects.filter(concepto=concepto).exists():
+            logger.warning('Concepto personal %s tiene movimientos, no se puede eliminar user=%s', concept_id, request.user.id)
             return Response(
                 {'detail': 'Este concepto tiene movimientos asociados.', 'tiene_movimientos': True, 'concepto_id': str(concepto.id)},
                 status=status.HTTP_409_CONFLICT,
             )
         concepto.activo = False
         concepto.save()
+        logger.info('Concepto personal eliminado id=%s user=%s', concept_id, request.user.id)
         return Response({'detail': 'Concepto eliminado.'})
 
 
@@ -622,15 +677,19 @@ class ConceptoPersonalDeleteWithMovementsView(APIView):
     def post(self, request, concept_id):
         accion = request.data.get('accion')
         if accion not in ('eliminar_movimientos', 'mantener_movimientos'):
+            logger.warning('Acción inválida "%s" en ConceptoPersonalDeleteWithMovements id=%s user=%s', accion, concept_id, request.user.id)
             return Response({'detail': 'Acción inválida.'}, status=status.HTTP_400_BAD_REQUEST)
         try:
             concepto = Concepto.objects.get(id=concept_id, usuario=request.user, activo=True, grupo__isnull=True)
         except Concepto.DoesNotExist:
+            logger.warning('Concepto personal %s no encontrado user=%s', concept_id, request.user.id)
             return Response({'detail': 'Concepto no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
         if accion == 'eliminar_movimientos':
-            Movimiento.objects.filter(concepto=concepto).delete()
+            deleted_count = Movimiento.objects.filter(concepto=concepto).delete()[0]
+            logger.info('Concepto personal %s eliminado con %d movimientos user=%s', concept_id, deleted_count, request.user.id)
         else:
             Movimiento.objects.filter(concepto=concepto).update(concepto=None)
+            logger.info('Concepto personal %s eliminado, movimientos conservados user=%s', concept_id, request.user.id)
         concepto.activo = False
         concepto.save()
         return Response({'detail': 'Concepto eliminado.'})
@@ -642,12 +701,14 @@ class MovimientoPersonalCorrectView(APIView):
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, movement_id):
+        logger.debug('Corrigiendo movimiento %s monto_final=%s user=%s', movement_id, request.data.get('monto_final'), request.user.id)
         try:
             mov = Movimiento.objects.get(
                 id=movement_id, usuario=request.user,
                 grupo__isnull=True, tipo=Movimiento.TIPO_GASTO,
             )
         except Movimiento.DoesNotExist:
+            logger.warning('Movimiento %s no encontrado para corrección user=%s', movement_id, request.user.id)
             return Response({'detail': 'Movimiento no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
         monto_final_raw = str(request.data.get('monto_final', '0')).replace('.', '').replace(',', '')
@@ -655,6 +716,7 @@ class MovimientoPersonalCorrectView(APIView):
             monto_final = int(monto_final_raw)
             assert monto_final > 0
         except (ValueError, AssertionError):
+            logger.warning('Monto inválido "%s" en corrección movimiento=%s user=%s', monto_final_raw, movement_id, request.user.id)
             return Response({'detail': 'Monto inválido.'}, status=status.HTTP_400_BAD_REQUEST)
 
         diferencia = monto_final - mov.monto
@@ -697,6 +759,10 @@ class MovimientoPersonalCorrectView(APIView):
                 mov_grupo.monto = monto_final
                 mov_grupo.save()
 
+        logger.info(
+            'Corrección registrada movimiento=%s original=%s final=%s diferencia=%s user=%s',
+            movement_id, mov.monto, monto_final, diferencia, request.user.id,
+        )
         signo = '+' if diferencia > 0 else '-'
         return Response({
             'detail': f'Corrección registrada: {signo}${monto_correccion:,} como {tipo_correccion.lower()}.'.replace(',', '.'),
@@ -746,12 +812,21 @@ class PresupuestoPersonalListCreateView(APIView):
         })
 
     def post(self, request):
+        logger.debug(
+            'Creando presupuesto personal user=%s tipo=%s monto=%s concepto=%s dividir=%s',
+            request.user.id,
+            request.data.get('tipo'),
+            request.data.get('monto'),
+            request.data.get('concepto'),
+            request.data.get('dividir_presupuesto'),
+        )
         serializer = PresupuestoPersonalCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
         concepto = data['concepto']
         if concepto.usuario_id != request.user.pk:
+            logger.warning('Concepto %s no pertenece al user=%s en presupuesto personal', concepto.id, request.user.id)
             return Response({'detail': 'El concepto no pertenece al usuario.'}, status=status.HTTP_400_BAD_REQUEST)
 
         dividir = data.get('dividir_presupuesto', False)
@@ -771,15 +846,18 @@ class PresupuestoPersonalListCreateView(APIView):
             if not GrupoMiembro.objects.filter(
                 usuario=request.user, grupo_id=grupo_division_id, grupo__activo=True
             ).exists():
+                logger.warning('User=%s no es miembro del grupo=%s para dividir presupuesto', request.user.id, grupo_division_id)
                 return Response({'detail': 'No eres miembro del grupo seleccionado.'}, status=status.HTTP_400_BAD_REQUEST)
             try:
                 grupo_div = Grupo.objects.get(id=grupo_division_id, activo=True)
             except Grupo.DoesNotExist:
+                logger.warning('Grupo %s no encontrado para dividir presupuesto user=%s', grupo_division_id, request.user.id)
                 return Response({'detail': 'Grupo no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
             otros_total = sum(int(d['monto']) for d in divisiones_input)
             monto_propietario = monto - otros_total
             if monto_propietario < 0:
+                logger.warning('Suma de divisiones %d supera total %d en presupuesto user=%s', otros_total, monto, request.user.id)
                 return Response({'detail': 'La suma de montos supera el total del presupuesto.'}, status=status.HTTP_400_BAD_REQUEST)
 
             usuarios_div = []
@@ -845,6 +923,10 @@ class PresupuestoPersonalListCreateView(APIView):
                     )
                 DivisionPresupuesto.objects.bulk_create(divisiones_objs)
 
+            logger.info(
+                'PresupuestoPersonal con división creado grupo=%s id=%s concepto=%s monto=%s user=%s divisiones=%d',
+                grupo_div.id, registro_grupo.id, concepto.nombre, monto, request.user.id, len(divisiones_objs),
+            )
             return Response(RegistroPresupuestoSerializer(registro_grupo).data, status=status.HTTP_201_CREATED)
 
         registro = RegistroPresupuesto.objects.create(
@@ -852,6 +934,7 @@ class PresupuestoPersonalListCreateView(APIView):
             detalle=data.get('detalle', ''), monto=monto,
             usuario=request.user, grupo=None,
         )
+        logger.info('PresupuestoPersonal creado id=%s concepto=%s monto=%s user=%s', registro.id, concepto.nombre, monto, request.user.id)
         return Response(RegistroPresupuestoSerializer(registro).data, status=status.HTTP_201_CREATED)
 
 
@@ -862,18 +945,22 @@ class PresupuestoPersonalDetailView(APIView):
         try:
             registro = RegistroPresupuesto.objects.get(id=budget_id, usuario=request.user, grupo__isnull=True)
         except RegistroPresupuesto.DoesNotExist:
+            logger.warning('PresupuestoPersonal %s no encontrado user=%s', budget_id, request.user.id)
             return Response({'detail': 'Registro no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
         serializer = RegistroPresupuestoUpdateSerializer(registro, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        logger.info('PresupuestoPersonal actualizado id=%s user=%s', budget_id, request.user.id)
         return Response(RegistroPresupuestoSerializer(registro).data)
 
     def delete(self, request, budget_id):
         try:
             registro = RegistroPresupuesto.objects.get(id=budget_id, usuario=request.user, grupo__isnull=True)
         except RegistroPresupuesto.DoesNotExist:
+            logger.warning('PresupuestoPersonal %s no encontrado user=%s', budget_id, request.user.id)
             return Response({'detail': 'Registro no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
         registro.delete()
+        logger.info('PresupuestoPersonal eliminado id=%s user=%s', budget_id, request.user.id)
         return Response({'detail': 'Registro de presupuesto eliminado.'})
 
 
@@ -926,6 +1013,7 @@ class MarcarGastoPagadoView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, gasto_id):
+        logger.debug('Marcando gasto compartido %s como pagado user=%s', gasto_id, request.user.id)
         grupos_ids = GrupoMiembro.objects.filter(
             usuario=request.user, grupo__activo=True
         ).values_list('grupo_id', flat=True)
@@ -934,6 +1022,7 @@ class MarcarGastoPagadoView(APIView):
                 'movimiento__concepto', 'usuario_deudor', 'grupo'
             ).get(id=gasto_id, usuario_acreedor=request.user, grupo_id__in=grupos_ids, pagado=False)
         except GastoCompartido.DoesNotExist:
+            logger.warning('GastoCompartido %s no encontrado user=%s', gasto_id, request.user.id)
             return Response({'detail': 'Gasto compartido no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
         nombre_gasto = gasto.movimiento.nombre if gasto.movimiento else 'Liquidación de deudas'
@@ -982,6 +1071,7 @@ class MarcarGastoPagadoView(APIView):
                 usuario=gasto.usuario_deudor,
             )
 
+        logger.info('GastoCompartido %s marcado como pagado monto=%s user=%s deudor=%s', gasto_id, gasto.monto_pendiente, request.user.id, gasto.usuario_deudor_id)
         return Response({'detail': 'Gasto marcado como pagado.'})
 
 
@@ -990,11 +1080,13 @@ class LiquidarView(APIView):
 
     def post(self, request):
         otro_usuario_id = request.data.get('otro_usuario_id')
+        logger.debug('Liquidando deudas entre user=%s y otro_usuario=%s', request.user.id, otro_usuario_id)
         if not otro_usuario_id:
             return Response({'detail': 'otro_usuario_id es requerido.'}, status=status.HTTP_400_BAD_REQUEST)
         try:
             otro_usuario = User.objects.get(id=otro_usuario_id)
         except User.DoesNotExist:
+            logger.warning('Usuario %s no encontrado para liquidar user=%s', otro_usuario_id, request.user.id)
             return Response({'detail': 'Usuario no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
         grupos_ids = list(
@@ -1012,6 +1104,7 @@ class LiquidarView(APIView):
         total_debo = debo_qs.aggregate(t=Sum('monto_pendiente'))['t'] or 0
 
         if total_me_deben == 0 and total_debo == 0:
+            logger.warning('Sin deudas pendientes entre user=%s y user=%s', request.user.id, otro_usuario_id)
             return Response({'detail': f'No hay deudas pendientes con {otro_usuario.username}.'}, status=status.HTTP_400_BAD_REQUEST)
 
         neto = total_me_deben - total_debo
@@ -1051,6 +1144,7 @@ class LiquidarView(APIView):
                     usuario=otro_usuario,
                 )
 
+        logger.info('Liquidación completada user=%s otro=%s neto=%s', request.user.id, otro_usuario_id, neto)
         if neto == 0:
             msg = f'¡Liquidado! Tú y {otro_usuario.username} quedan a mano.'
         elif neto > 0:
@@ -1076,11 +1170,16 @@ class SplitConfirmView(APIView):
         distribuciones = data['distribuciones']
         payer_id = data.get('payer_id') or request.user.id
 
+        logger.debug('SplitConfirm grupo=%s monto=%s concepto=%s pagador=%s user=%s distribuciones=%d',
+                     grupo_id, monto_total, concepto_nombre, payer_id, request.user.id, len(distribuciones))
+
         try:
             grupo = Grupo.objects.get(id=grupo_id, activo=True)
         except Grupo.DoesNotExist:
+            logger.warning('Grupo %s no encontrado en SplitConfirm user=%s', grupo_id, request.user.id)
             return Response({'detail': 'Grupo no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
         if not GrupoMiembro.objects.filter(usuario=request.user, grupo=grupo).exists():
+            logger.warning('User=%s no pertenece al grupo=%s en SplitConfirm', request.user.id, grupo_id)
             return Response({'detail': 'No perteneces a este grupo.'}, status=status.HTTP_403_FORBIDDEN)
 
         try:
@@ -1156,6 +1255,8 @@ class SplitConfirmView(APIView):
                 referencia_id=mov.id, excluir_usuario=request.user,
             )
 
+        logger.info('SplitConfirm completado grupo=%s movimiento=%s monto=%s deudores=%d user=%s',
+                    grupo_id, mov.id, monto_total, len(gastos_creados), request.user.id)
         return Response({'ok': True, 'gastos': gastos_creados, 'movimiento_id': str(mov.id)})
 
 
@@ -1187,6 +1288,7 @@ class MetaAhorroPersonalListCreateView(APIView):
         serializer = MetaAhorroCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         meta = serializer.save(tipo=MetaAhorro.TIPO_PERSONAL, usuario=request.user, grupo=None)
+        logger.info('MetaAhorro personal creada id=%s nombre=%s user=%s', meta.id, meta.nombre, request.user.id)
         return Response(MetaAhorroSerializer(meta).data, status=status.HTTP_201_CREATED)
 
 
@@ -1221,12 +1323,14 @@ class MetaAhorroPersonalAportarView(APIView):
         try:
             meta = MetaAhorro.objects.get(id=meta_id, usuario=request.user, tipo=MetaAhorro.TIPO_PERSONAL, activa=True)
         except MetaAhorro.DoesNotExist:
+            logger.warning('MetaAhorro personal %s no encontrada user=%s', meta_id, request.user.id)
             return Response({'detail': 'Meta no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
         monto_raw = str(request.data.get('monto', '0')).replace('.', '').replace(',', '')
         try:
             monto = int(monto_raw)
             assert monto > 0
         except (ValueError, AssertionError):
+            logger.warning('Monto inválido "%s" en aporte meta=%s user=%s', monto_raw, meta_id, request.user.id)
             return Response({'detail': 'Monto inválido.'}, status=status.HTTP_400_BAD_REQUEST)
 
         with transaction.atomic():
@@ -1244,6 +1348,7 @@ class MetaAhorroPersonalAportarView(APIView):
                 monto=monto, fecha=timezone.now(), movimiento=mov,
             )
 
+        logger.info('Aporte a MetaAhorro personal meta=%s monto=%s user=%s', meta_id, monto, request.user.id)
         return Response(MetaAhorroSerializer(meta).data, status=status.HTTP_201_CREATED)
 
 
@@ -1254,6 +1359,7 @@ class MetaAhorroPersonalRetirarView(APIView):
         try:
             meta = MetaAhorro.objects.get(id=meta_id, usuario=request.user, tipo=MetaAhorro.TIPO_PERSONAL, activa=True)
         except MetaAhorro.DoesNotExist:
+            logger.warning('MetaAhorro personal %s no encontrada para retiro user=%s', meta_id, request.user.id)
             return Response({'detail': 'Meta no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
         monto_raw = str(request.data.get('monto', '0')).replace('.', '').replace(',', '')
         try:
@@ -1261,6 +1367,7 @@ class MetaAhorroPersonalRetirarView(APIView):
             ahorrado = meta.aportes.aggregate(t=Sum('monto'))['t'] or 0
             assert 0 < monto <= ahorrado
         except (ValueError, AssertionError):
+            logger.warning('Monto retiro inválido "%s" meta=%s ahorrado=%s user=%s', monto_raw, meta_id, locals().get('ahorrado', '?'), request.user.id)
             return Response({'detail': 'Monto de retiro inválido.'}, status=status.HTTP_400_BAD_REQUEST)
 
         with transaction.atomic():
@@ -1278,6 +1385,7 @@ class MetaAhorroPersonalRetirarView(APIView):
                 monto=-monto, fecha=timezone.now(), movimiento=mov,
             )
 
+        logger.info('Retiro de MetaAhorro personal meta=%s monto=%s user=%s', meta_id, monto, request.user.id)
         return Response(MetaAhorroSerializer(meta).data)
 
 
@@ -1288,9 +1396,11 @@ class MetaAhorroPersonalArchivarView(APIView):
         try:
             meta = MetaAhorro.objects.get(id=meta_id, usuario=request.user, tipo=MetaAhorro.TIPO_PERSONAL)
         except MetaAhorro.DoesNotExist:
+            logger.warning('MetaAhorro personal %s no encontrada para archivar user=%s', meta_id, request.user.id)
             return Response({'detail': 'Meta no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
         meta.activa = False
         meta.save()
+        logger.info('MetaAhorro personal archivada id=%s nombre=%s user=%s', meta_id, meta.nombre, request.user.id)
         return Response({'detail': f'Meta "{meta.nombre}" archivada.'})
 
 
@@ -1315,6 +1425,7 @@ class TarjetaListCreateView(APIView):
         serializer = TarjetaCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         tarjeta = serializer.save(usuario=request.user)
+        logger.info('Tarjeta creada id=%s tipo=%s user=%s', tarjeta.id, tarjeta.tipo, request.user.id)
         return Response(TarjetaSerializer(tarjeta).data, status=status.HTTP_201_CREATED)
 
 
@@ -1347,9 +1458,11 @@ class TarjetaDetailView(APIView):
         try:
             tarjeta = Tarjeta.objects.get(id=card_id, usuario=request.user, activa=True)
         except Tarjeta.DoesNotExist:
+            logger.warning('Tarjeta %s no encontrada user=%s', card_id, request.user.id)
             return Response({'detail': 'Tarjeta no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
         tarjeta.activa = False
         tarjeta.save()
+        logger.info('Tarjeta eliminada id=%s user=%s', card_id, request.user.id)
         return Response({'detail': 'Tarjeta eliminada.'})
 
 
@@ -1368,14 +1481,17 @@ class MetaAhorroGrupalListCreateView(APIView):
 
     def post(self, request, group_id):
         if not GrupoMiembro.objects.filter(usuario=request.user, grupo_id=group_id, rol=GrupoMiembro.ROL_ADMIN).exists():
+            logger.warning('User=%s no es admin del grupo=%s, intento de crear meta grupal', request.user.id, group_id)
             return Response({'detail': 'Solo el administrador puede crear metas grupales.'}, status=status.HTTP_403_FORBIDDEN)
         try:
             grupo = Grupo.objects.get(id=group_id, activo=True)
         except Grupo.DoesNotExist:
+            logger.warning('Grupo %s no encontrado para meta grupal user=%s', group_id, request.user.id)
             return Response({'detail': 'Grupo no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
         serializer = MetaAhorroCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         meta = serializer.save(tipo=MetaAhorro.TIPO_GRUPAL, usuario=None, grupo=grupo)
+        logger.info('MetaAhorro grupal creada id=%s nombre=%s grupo=%s user=%s', meta.id, meta.nombre, group_id, request.user.id)
         notificar = bool(request.data.get('notificar', False))
         if notificar:
             crear_notificaciones_grupo(
@@ -1434,10 +1550,12 @@ class MetaAhorroGrupalAportarView(APIView):
         try:
             meta = MetaAhorro.objects.get(id=meta_id, grupo_id=group_id, tipo=MetaAhorro.TIPO_GRUPAL, activa=True)
         except MetaAhorro.DoesNotExist:
+            logger.warning('MetaAhorro grupal %s no encontrada grupo=%s user=%s', meta_id, group_id, request.user.id)
             return Response({'detail': 'Meta no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
         try:
             grupo = Grupo.objects.get(id=group_id, activo=True)
         except Grupo.DoesNotExist:
+            logger.warning('Grupo %s no encontrado en aporte meta grupal user=%s', group_id, request.user.id)
             return Response({'detail': 'Grupo no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
         monto_raw = str(request.data.get('monto', '0')).replace('.', '').replace(',', '')
@@ -1445,6 +1563,7 @@ class MetaAhorroGrupalAportarView(APIView):
             monto = int(monto_raw)
             assert monto > 0
         except (ValueError, AssertionError):
+            logger.warning('Monto inválido "%s" en aporte meta grupal=%s user=%s', monto_raw, meta_id, request.user.id)
             return Response({'detail': 'Monto inválido.'}, status=status.HTTP_400_BAD_REQUEST)
 
         with transaction.atomic():
@@ -1469,6 +1588,7 @@ class MetaAhorroGrupalAportarView(APIView):
                     referencia_id=meta.id,
                 )
 
+        logger.info('Aporte a MetaAhorro grupal meta=%s monto=%s grupo=%s user=%s', meta_id, monto, group_id, request.user.id)
         return Response(MetaAhorroSerializer(meta).data, status=status.HTTP_201_CREATED)
 
 
@@ -1477,11 +1597,14 @@ class MetaAhorroGrupalArchivarView(APIView):
 
     def post(self, request, group_id, meta_id):
         if not GrupoMiembro.objects.filter(usuario=request.user, grupo_id=group_id, rol=GrupoMiembro.ROL_ADMIN).exists():
+            logger.warning('User=%s no es admin del grupo=%s, intento de archivar meta grupal', request.user.id, group_id)
             return Response({'detail': 'Solo el administrador puede archivar metas grupales.'}, status=status.HTTP_403_FORBIDDEN)
         try:
             meta = MetaAhorro.objects.get(id=meta_id, grupo_id=group_id, tipo=MetaAhorro.TIPO_GRUPAL)
         except MetaAhorro.DoesNotExist:
+            logger.warning('MetaAhorro grupal %s no encontrada para archivar grupo=%s user=%s', meta_id, group_id, request.user.id)
             return Response({'detail': 'Meta no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
         meta.activa = False
         meta.save()
+        logger.info('MetaAhorro grupal archivada id=%s nombre=%s grupo=%s user=%s', meta_id, meta.nombre, group_id, request.user.id)
         return Response({'detail': f'Meta "{meta.nombre}" archivada.'})

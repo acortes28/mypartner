@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import logging
 import os
 from datetime import date
 
@@ -25,6 +26,7 @@ from .models import (
 )
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 def _get_grupos_usuario(user):
@@ -309,8 +311,10 @@ def budget_view(request):
                             usuario=request.user, grupo=None,
                         )
 
+                logger.info('PresupuestoWeb creado user=%s tipo=%s nombre=%s monto=%s dividir=%s', request.user.id, tipo, nombre, monto, dividir_presupuesto)
                 messages.success(request, 'Registro de presupuesto agregado.')
             except Exception as e:
+                logger.error('Error creando presupuesto web user=%s: %s', request.user.id, e, exc_info=True)
                 messages.error(request, f'Error al agregar registro: {e}')
 
         elif action == 'modify':
@@ -320,8 +324,10 @@ def budget_view(request):
                 registro = RegistroPresupuesto.objects.get(id=registro_id, usuario=request.user)
                 registro.monto = int(monto_str)
                 registro.save()
+                logger.info('PresupuestoWeb actualizado id=%s user=%s', registro_id, request.user.id)
                 messages.success(request, 'Monto actualizado.')
-            except Exception:
+            except Exception as e:
+                logger.error('Error actualizando presupuesto web id=%s user=%s: %s', registro_id, request.user.id, e, exc_info=True)
                 messages.error(request, 'Error al modificar.')
 
         elif action == 'delete':
@@ -329,8 +335,10 @@ def budget_view(request):
             try:
                 registro = RegistroPresupuesto.objects.get(id=registro_id, usuario=request.user)
                 registro.delete()
+                logger.info('PresupuestoWeb eliminado id=%s user=%s', registro_id, request.user.id)
                 messages.success(request, 'Registro eliminado.')
-            except Exception:
+            except Exception as e:
+                logger.error('Error eliminando presupuesto web id=%s user=%s: %s', registro_id, request.user.id, e, exc_info=True)
                 messages.error(request, 'Error al eliminar.')
 
         return redirect('finances-budget')
@@ -395,11 +403,14 @@ def concepts_view(request):
             tipo = request.POST.get('tipo')
             if nombre and tipo in ('Gasto', 'Ingreso'):
                 if Concepto.objects.filter(usuario=request.user, nombre__iexact=nombre, activo=True).exists():
+                    logger.warning('ConceptoWeb duplicado "%s" user=%s', nombre, request.user.id)
                     messages.error(request, f'Ya existe un concepto llamado "{nombre}".')
                 else:
                     Concepto.objects.create(nombre=nombre, tipo=tipo, usuario=request.user, grupo=None)
+                    logger.info('ConceptoWeb creado nombre=%s tipo=%s user=%s', nombre, tipo, request.user.id)
                     messages.success(request, 'Concepto agregado.')
             else:
+                logger.warning('ConceptoWeb datos inválidos nombre="%s" tipo="%s" user=%s', nombre, tipo, request.user.id)
                 messages.error(request, 'Nombre y tipo son obligatorios.')
 
         elif action == 'edit':
@@ -408,12 +419,15 @@ def concepts_view(request):
             try:
                 c = Concepto.objects.get(id=concepto_id, usuario=request.user, activo=True)
                 if Concepto.objects.filter(usuario=request.user, nombre__iexact=nombre, activo=True).exclude(id=concepto_id).exists():
+                    logger.warning('ConceptoWeb duplicado "%s" al editar id=%s user=%s', nombre, concepto_id, request.user.id)
                     messages.error(request, f'Ya existe un concepto llamado "{nombre}".')
                     return redirect('finances-concepts')
                 c.nombre = nombre
                 c.save()
+                logger.info('ConceptoWeb actualizado id=%s nombre=%s user=%s', concepto_id, nombre, request.user.id)
                 messages.success(request, 'Concepto actualizado.')
             except Concepto.DoesNotExist:
+                logger.warning('ConceptoWeb %s no encontrado al editar user=%s', concepto_id, request.user.id)
                 messages.error(request, 'Concepto no encontrado.')
 
         elif action == 'delete':
@@ -422,14 +436,16 @@ def concepts_view(request):
             try:
                 c = Concepto.objects.get(id=concepto_id, usuario=request.user, activo=True)
                 if opcion == 'eliminar_movimientos':
-                    Movimiento.objects.filter(concepto=c).delete()
+                    deleted_count = Movimiento.objects.filter(concepto=c).delete()[0]
                     c.activo = False
                     c.save()
+                    logger.info('ConceptoWeb eliminado con %d movimientos id=%s user=%s', deleted_count, concepto_id, request.user.id)
                     messages.success(request, 'Concepto y movimientos eliminados.')
                 elif opcion == 'mantener_movimientos':
                     Movimiento.objects.filter(concepto=c).update(concepto=None)
                     c.activo = False
                     c.save()
+                    logger.info('ConceptoWeb eliminado, movimientos conservados id=%s user=%s', concepto_id, request.user.id)
                     messages.success(request, 'Concepto eliminado. Movimientos conservados.')
                 else:
                     has_mov = Movimiento.objects.filter(concepto=c).exists()
@@ -440,8 +456,10 @@ def concepts_view(request):
                         })
                     c.activo = False
                     c.save()
+                    logger.info('ConceptoWeb eliminado id=%s user=%s', concepto_id, request.user.id)
                     messages.success(request, 'Concepto eliminado.')
             except Concepto.DoesNotExist:
+                logger.warning('ConceptoWeb %s no encontrado al eliminar user=%s', concepto_id, request.user.id)
                 messages.error(request, 'Concepto no encontrado.')
 
         return redirect('finances-concepts')
@@ -497,10 +515,12 @@ def movement_correct_view(request, movement_id):
     )
 
     monto_final_str = request.POST.get('monto_final', '0').replace('.', '').replace(',', '')
+    logger.debug('CorreccionWeb movimiento=%s monto_final=%s user=%s', movement_id, monto_final_str, request.user.id)
     try:
         monto_final = int(monto_final_str)
         assert monto_final > 0
     except (ValueError, AssertionError):
+        logger.warning('CorreccionWeb monto inválido "%s" movimiento=%s user=%s', monto_final_str, movement_id, request.user.id)
         messages.error(request, 'Monto inválido.')
         return redirect('finances-movement-detail', movement_id=movement_id)
 
@@ -554,6 +574,7 @@ def movement_correct_view(request, movement_id):
             mov_grupo.monto = monto_final
             mov_grupo.save()
 
+    logger.info('CorreccionWeb registrada movimiento=%s original=%s final=%s diferencia=%s user=%s', movement_id, monto_original, monto_final, diferencia, request.user.id)
     signo = '+' if diferencia > 0 else '-'
     messages.success(
         request,
@@ -598,6 +619,7 @@ def add_movement_view(request):
         monto_compartido_str = request.POST.get('monto_compartido', '').replace('.', '').replace(',', '')
         tarjeta_id = request.POST.get('tarjeta_id', '').strip()
         cuotas_str = request.POST.get('cuotas', '').strip()
+        logger.debug('MovimientoWeb tipo=%s nombre=%s monto=%s grupo=%s compartido=%s user=%s', tipo, nombre, monto_str, grupo_id, es_compartido, request.user.id)
 
         comprobante = request.FILES.get('comprobante')
         grupo_doc = None
@@ -700,6 +722,7 @@ def add_movement_view(request):
                         )
                         grupo_doc = grupo
 
+            logger.info('MovimientoWeb creado id=%s tipo=%s monto=%s grupo=%s compartido=%s user=%s', mov_personal.id, tipo, monto, grupo_id or None, es_compartido, request.user.id)
             messages.success(request, f'{tipo} registrado exitosamente.')
 
             if comprobante and grupo_doc:
@@ -714,8 +737,10 @@ def add_movement_view(request):
                     grupo=grupo_doc,
                 )
         except GrupoMiembro.DoesNotExist:
+            logger.warning('MovimientoWeb: deudor %s no pertenece al grupo=%s user=%s', usuario_deudor_id, grupo_id, request.user.id)
             messages.error(request, 'El usuario seleccionado no pertenece al grupo.')
         except Exception as e:
+            logger.error('Error creando movimiento web user=%s: %s', request.user.id, e, exc_info=True)
             messages.error(request, f'Error al registrar: {e}')
 
     return redirect('finances-dashboard')
@@ -780,8 +805,10 @@ def gastos_compartidos_view(request):
                     referencia_id=gasto.movimiento_id,
                     usuario=gasto.usuario_deudor,
                 )
+            logger.info('GastoCompartidoWeb %s marcado pagado monto=%s user=%s', gasto_id, gasto.monto_pendiente, request.user.id)
             messages.success(request, 'Gasto marcado como pagado.')
         except GastoCompartido.DoesNotExist:
+            logger.warning('GastoCompartidoWeb %s no encontrado user=%s', gasto_id, request.user.id)
             messages.error(request, 'No se pudo marcar como pagado.')
         return redirect('finances-shared')
 
@@ -831,9 +858,11 @@ def liquidar_view(request):
         return redirect('finances-shared')
 
     otro_usuario_id = request.POST.get('otro_usuario_id', '').strip()
+    logger.debug('LiquidarWeb user=%s otro_usuario=%s', request.user.id, otro_usuario_id)
     try:
         otro_usuario = User.objects.get(id=otro_usuario_id)
     except (User.DoesNotExist, ValueError):
+        logger.warning('LiquidarWeb usuario %s no encontrado user=%s', otro_usuario_id, request.user.id)
         messages.error(request, 'Usuario no encontrado.')
         return redirect('finances-shared')
 
@@ -852,6 +881,7 @@ def liquidar_view(request):
     total_debo = debo_qs.aggregate(t=Sum('monto_pendiente'))['t'] or 0
 
     if total_me_deben == 0 and total_debo == 0:
+        logger.warning('LiquidarWeb: sin deudas pendientes entre user=%s y user=%s', request.user.id, otro_usuario_id)
         messages.warning(request, f'No hay deudas pendientes con {otro_usuario.username}.')
         return redirect('finances-shared')
 
@@ -893,6 +923,7 @@ def liquidar_view(request):
                 usuario=otro_usuario,
             )
 
+    logger.info('LiquidarWeb completado user=%s otro=%s neto=%s', request.user.id, otro_usuario_id, neto)
     if neto == 0:
         messages.success(request, f'¡Liquidado! Tú y {otro_usuario.username} quedan a mano.')
     elif neto > 0:
@@ -1215,7 +1246,7 @@ def savings_personal_view(request):
             monto_objetivo = _parse_monto_ahorro(request.POST.get('monto_objetivo', '0'))
             assert monto_objetivo > 0 and nombre
             fecha_limite = date.fromisoformat(fecha_limite_str) if fecha_limite_str else None
-            MetaAhorro.objects.create(
+            meta_obj = MetaAhorro.objects.create(
                 nombre=nombre,
                 monto_objetivo=monto_objetivo,
                 fecha_limite=fecha_limite,
@@ -1223,8 +1254,10 @@ def savings_personal_view(request):
                 usuario=request.user,
                 grupo=None,
             )
+            logger.info('MetaAhorroWeb personal creada id=%s nombre=%s user=%s', meta_obj.id, nombre, request.user.id)
             messages.success(request, f'Meta "{nombre}" creada.')
-        except (ValueError, AssertionError):
+        except (ValueError, AssertionError) as e:
+            logger.warning('MetaAhorroWeb datos inválidos nombre=%s user=%s: %s', nombre, request.user.id, e)
             messages.error(request, 'Datos inválidos.')
         return redirect('finances-savings-personal')
 
@@ -1279,7 +1312,9 @@ def savings_personal_detail_view(request, meta_id):
                         messages.success(request, f'¡Llegaste al 50% de "{meta.nombre}"!')
                     else:
                         messages.success(request, 'Aporte registrado.')
-            except (ValueError, AssertionError):
+                    logger.info('AporteAhorroWeb meta=%s monto=%s user=%s pct=%.1f', meta_id, monto, request.user.id, pct)
+            except (ValueError, AssertionError) as e:
+                logger.warning('AporteAhorroWeb monto inválido meta=%s user=%s: %s', meta_id, request.user.id, e)
                 messages.error(request, 'Monto inválido.')
 
         elif action == 'retirar':
@@ -1303,8 +1338,10 @@ def savings_personal_detail_view(request, meta_id):
                         meta=meta, usuario=request.user,
                         monto=-monto, fecha=timezone.now(), movimiento=mov,
                     )
+                logger.info('RetiroAhorroWeb meta=%s monto=%s user=%s', meta_id, monto, request.user.id)
                 messages.success(request, 'Retiro registrado.')
-            except (ValueError, AssertionError):
+            except (ValueError, AssertionError) as e:
+                logger.warning('RetiroAhorroWeb monto inválido meta=%s user=%s: %s', meta_id, request.user.id, e)
                 messages.error(request, 'Monto de retiro inválido.')
 
         elif action == 'editar':
@@ -1356,6 +1393,7 @@ def savings_group_view(request, group_id):
 
     if request.method == 'POST':
         if not es_admin:
+            logger.warning('MetaAhorroGrupalWeb: user=%s no es admin del grupo=%s', request.user.id, group_id)
             messages.error(request, 'Solo el admin puede crear metas grupales.')
             return redirect('finances-savings-group', group_id=group_id)
 
@@ -1381,8 +1419,10 @@ def savings_group_view(request, group_id):
                     referencia_id=meta.id,
                     excluir_usuario=request.user,
                 )
+            logger.info('MetaAhorroGrupalWeb creada id=%s nombre=%s grupo=%s user=%s', meta.id, nombre, group_id, request.user.id)
             messages.success(request, f'Meta grupal "{nombre}" creada.')
-        except (ValueError, AssertionError):
+        except (ValueError, AssertionError) as e:
+            logger.warning('MetaAhorroGrupalWeb datos inválidos grupo=%s user=%s: %s', group_id, request.user.id, e)
             messages.error(request, 'Datos inválidos.')
         return redirect('finances-savings-group', group_id=group_id)
 
@@ -1517,18 +1557,21 @@ def tarjetas_view(request):
             cupo_usado_str = request.POST.get('cupo_usado', '').replace('.', '').replace(',', '').strip()
 
             if not nombre or tipo not in ('Debito', 'Credito') or not banco:
+                logger.warning('TarjetaWeb datos inválidos nombre=%s tipo=%s user=%s', nombre, tipo, request.user.id)
                 messages.error(request, 'Nombre, tipo y banco son obligatorios.')
             else:
                 cupo_total = int(cupo_total_str) if cupo_total_str.isdigit() and tipo == 'Credito' else None
                 cupo_usado = int(cupo_usado_str) if cupo_usado_str.isdigit() and tipo == 'Credito' else None
                 if cupo_total is not None and cupo_usado is not None and cupo_usado > cupo_total:
+                    logger.warning('TarjetaWeb cupo_usado>cupo_total nombre=%s user=%s', nombre, request.user.id)
                     messages.error(request, 'El cupo utilizado no puede ser mayor al cupo total.')
                 else:
-                    Tarjeta.objects.create(
+                    t = Tarjeta.objects.create(
                         nombre=nombre, tipo=tipo, banco=banco,
                         cupo_total=cupo_total, cupo_usado=cupo_usado,
                         usuario=request.user,
                     )
+                    logger.info('TarjetaWeb creada id=%s nombre=%s tipo=%s user=%s', t.id, nombre, tipo, request.user.id)
                     messages.success(request, f'Tarjeta "{nombre}" agregada.')
 
         elif action == 'delete':
@@ -1537,8 +1580,10 @@ def tarjetas_view(request):
                 t = Tarjeta.objects.get(id=tarjeta_id, usuario=request.user, activa=True)
                 t.activa = False
                 t.save()
+                logger.info('TarjetaWeb eliminada id=%s user=%s', tarjeta_id, request.user.id)
                 messages.success(request, 'Tarjeta eliminada.')
             except Tarjeta.DoesNotExist:
+                logger.warning('TarjetaWeb %s no encontrada user=%s', tarjeta_id, request.user.id)
                 messages.error(request, 'Tarjeta no encontrada.')
 
         return redirect('finances-tarjetas')

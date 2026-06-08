@@ -179,6 +179,11 @@ LOGGING = {
             'level': 'INFO',
             'propagate': False,
         },
+        'apps.finances': {
+            'handlers': ['console'],
+            'level': 'DEBUG' if DEBUG else 'INFO',
+            'propagate': False,
+        },
     },
 }
 
