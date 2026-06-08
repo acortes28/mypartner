@@ -42,7 +42,7 @@ def _send_push(usuario_id, titulo, tipo):
         response = requests.post(
             'https://onesignal.com/api/v1/notifications',
             headers={
-                'Authorization': f'Key {api_key}',
+                'Authorization': f'Bearer {api_key}' if api_key.startswith('os_v2_') else f'Key {api_key}',
                 'Content-Type': 'application/json',
             },
             json={
