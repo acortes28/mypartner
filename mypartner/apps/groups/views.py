@@ -35,7 +35,7 @@ class MyGroupView(APIView):
 
 class CreateGroupView(APIView):
     def post(self, request):
-        serializer = CreateGrupoSerializer(data=request.data)
+        serializer = CreateGrupoSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         grupo = serializer.save()
         GrupoMiembro.objects.create(usuario=request.user, grupo=grupo, rol=GrupoMiembro.ROL_ADMIN)

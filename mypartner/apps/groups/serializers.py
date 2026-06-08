@@ -28,6 +28,16 @@ class CreateGrupoSerializer(serializers.ModelSerializer):
         model = Grupo
         fields = ['nombre', 'descripcion']
 
+    def validate_nombre(self, value):
+        user = self.context['request'].user
+        if GrupoMiembro.objects.filter(
+            usuario=user,
+            grupo__nombre__iexact=value,
+            grupo__activo=True,
+        ).exists():
+            raise serializers.ValidationError('Ya perteneces a un grupo con ese nombre.')
+        return value
+
 
 class InvitarUsuarioSerializer(serializers.Serializer):
     username = serializers.CharField()
