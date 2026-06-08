@@ -2,6 +2,7 @@ import csv
 import io
 import logging
 from datetime import date
+from zoneinfo import ZoneInfo
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
@@ -465,6 +466,62 @@ class MovimientoPersonalDetailView(APIView):
         data = MovimientoSerializer(movimiento).data
         data['replicas'] = ReplicaGrupalSerializer(replicas, many=True).data
         return Response(data)
+
+
+class MovimientoPersonalExportView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+
+        movimientos = (
+            Movimiento.objects
+            .filter(usuario=request.user, grupo__isnull=True)
+            .select_related('concepto')
+            .order_by('-fecha_hora')
+        )
+        count = movimientos.count()
+        logger.info('Exportando movimientos XLSX personal user=%s count=%d', request.user.id, count)
+
+        tz = ZoneInfo('America/Santiago')
+        wb = Workbook()
+        ws = wb.active
+        ws.title = 'Movimientos'
+
+        headers = ['Tipo', 'Concepto', 'Nombre', 'Detalle', 'Monto', 'Fecha y hora']
+        ws.append(headers)
+        for col_idx, _ in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.font = Font(bold=True, color='FFFFFF')
+            cell.fill = PatternFill(start_color='166534', end_color='166534', fill_type='solid')
+            cell.alignment = Alignment(horizontal='center')
+
+        for m in movimientos:
+            concepto_nombre = m.concepto.nombre if m.concepto and m.concepto.activo else 'Sin concepto'
+            ws.append([
+                m.tipo,
+                concepto_nombre,
+                m.nombre,
+                m.detalle or '',
+                m.monto,
+                m.fecha_hora.astimezone(tz).strftime('%d/%m/%Y %H:%M'),
+            ])
+
+        for col in ws.columns:
+            width = max(len(str(cell.value or '')) for cell in col)
+            ws.column_dimensions[col[0].column_letter].width = min(width + 4, 50)
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        response = HttpResponse(
+            output.getvalue(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        response['Content-Disposition'] = 'attachment; filename="movimientos_personales.xlsx"'
+        return response
 
 
 class ReplicarMovimientoView(APIView):

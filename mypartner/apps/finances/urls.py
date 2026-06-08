@@ -26,6 +26,7 @@ urlpatterns = [
     path('personal/concepts/<uuid:concept_id>/delete-with-movements/', views.ConceptoPersonalDeleteWithMovementsView.as_view(), name='api-personal-concept-delete-with-movements'),
     # Movimientos personales
     path('personal/movements/', views.MovimientoPersonalListView.as_view(), name='api-personal-movement-list'),
+    path('personal/movements/export/', views.MovimientoPersonalExportView.as_view(), name='api-personal-movement-export'),
     path('personal/movements/<uuid:movement_id>/', views.MovimientoPersonalDetailView.as_view(), name='api-personal-movement-detail'),
     path('personal/movements/<uuid:movement_id>/replicate/', views.ReplicarMovimientoView.as_view(), name='api-movement-replicate'),
     path('personal/movements/<uuid:movement_id>/correct/', views.MovimientoPersonalCorrectView.as_view(), name='api-personal-movement-correct'),
