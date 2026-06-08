@@ -254,6 +254,7 @@ class PresupuestoListCreateView(APIView):
             RegistroPresupuesto.objects
             .filter(grupo_id=group_id)
             .select_related('concepto')
+            .prefetch_related('divisiones__usuario', 'divisiones__grupo')
             .order_by('tipo', 'concepto__nombre')
         )
         total = registros.aggregate(total=Sum('monto'))['total'] or 0
@@ -619,21 +620,32 @@ class FinanciasDashboardPersonalView(APIView):
     def get(self, request):
         hoy = date.today()
         mes_inicio = hoy.replace(day=1)
+        _conceptos_ahorro = ('Ahorro', 'Retiro de ahorro')
         movimientos_mes = Movimiento.objects.filter(
             usuario=request.user, grupo__isnull=True,
             fecha_hora__date__gte=mes_inicio, fecha_hora__date__lte=hoy,
         )
-        gasto_mensual = movimientos_mes.filter(tipo='Gasto').aggregate(total=Sum('monto'))['total'] or 0
-        ingreso_mensual = movimientos_mes.filter(tipo='Ingreso').aggregate(total=Sum('monto'))['total'] or 0
+        gasto_mensual = (
+            movimientos_mes.filter(tipo='Gasto')
+            .exclude(concepto__nombre__in=_conceptos_ahorro)
+            .aggregate(total=Sum('monto'))['total'] or 0
+        )
+        ingreso_mensual = (
+            movimientos_mes.filter(tipo='Ingreso')
+            .exclude(concepto__nombre__in=_conceptos_ahorro)
+            .aggregate(total=Sum('monto'))['total'] or 0
+        )
         saldo_restante = ingreso_mensual - gasto_mensual
         presupuesto_hasta_hoy = (
             RegistroPresupuesto.objects
             .filter(usuario=request.user, grupo__isnull=True, tipo='Gasto', fecha__lte=hoy)
+            .exclude(concepto__nombre__in=_conceptos_ahorro)
             .aggregate(total=Sum('monto'))['total'] or 0
         )
         desviacion_presupuesto = presupuesto_hasta_hoy - gasto_mensual
         gastos_por_concepto = (
             movimientos_mes.filter(tipo='Gasto')
+            .exclude(concepto__nombre__in=_conceptos_ahorro)
             .values('concepto__nombre')
             .annotate(total=Sum('monto'))
             .order_by('-total')
