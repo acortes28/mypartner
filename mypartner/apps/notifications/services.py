@@ -39,7 +39,7 @@ def _send_push(usuario_id, titulo, tipo):
         return
 
     try:
-        requests.post(
+        response = requests.post(
             'https://onesignal.com/api/v1/notifications',
             headers={
                 'Authorization': f'Key {api_key}',
@@ -54,6 +54,14 @@ def _send_push(usuario_id, titulo, tipo):
             },
             timeout=5,
         )
+        if response.status_code != 200:
+            logger.warning('OneSignal push error [%s] user=%s body=%s', response.status_code, usuario_id, response.text)
+        else:
+            data = response.json()
+            if data.get('recipients', 1) == 0:
+                logger.warning('OneSignal push: 0 recipients for user=%s (external_id no registrado en OneSignal)', usuario_id)
+            else:
+                logger.info('OneSignal push OK user=%s recipients=%s', usuario_id, data.get('recipients'))
     except Exception as exc:
         logger.warning('OneSignal push failed for user %s: %s', usuario_id, exc)
 
