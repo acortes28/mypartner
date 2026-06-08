@@ -19,23 +19,18 @@ from .serializers import (
 )
 
 
-def _get_user_group(user):
-    membership = (
-        GrupoMiembro.objects
-        .filter(usuario=user, grupo__activo=True)
-        .select_related('grupo')
-        .first()
-    )
-    return membership
-
-
 class MyGroupView(APIView):
     def get(self, request):
-        membership = _get_user_group(request.user)
-        if not membership:
-            return Response({'grupo': None, 'mensaje': 'Sin grupo'})
-        serializer = GrupoSerializer(membership.grupo)
-        return Response({'grupo': serializer.data, 'rol': membership.rol})
+        memberships = (
+            GrupoMiembro.objects
+            .filter(usuario=request.user, grupo__activo=True)
+            .select_related('grupo')
+        )
+        data = [
+            {'grupo': GrupoSerializer(m.grupo).data, 'rol': m.rol}
+            for m in memberships
+        ]
+        return Response(data)
 
 
 class CreateGroupView(APIView):

@@ -19,6 +19,11 @@ services:
   web:
     build: .
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
       - ./mypartner:/app          # hot-reload: cambios locales se reflejan al instante
       - media_vol:/app/media      # archivos subidos persisten entre reinicios
